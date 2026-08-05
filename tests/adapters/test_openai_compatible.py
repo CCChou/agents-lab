@@ -12,12 +12,19 @@ def test_satisfies_llm_client_port():
     assert isinstance(client, LLMClient)
 
 
-def test_complete_sends_expected_request_and_parses_response():
+def test_stream_sends_expected_request_and_yields_content_chunks():
     captured: dict[str, httpx.Request] = {}
+    sse_body = (
+        b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":" world"}}]}\n\n'
+        b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["request"] = request
-        return httpx.Response(200, json={"choices": [{"message": {"content": "pong"}}]})
+        return httpx.Response(200, content=sse_body)
 
     client = OpenAICompatibleLLMClient(
         base_url="https://example.test/v1",
@@ -26,7 +33,7 @@ def test_complete_sends_expected_request_and_parses_response():
         transport=httpx.MockTransport(handler),
     )
 
-    result = client.complete("ping")
+    chunks = list(client.stream("ping"))
 
     request = captured["request"]
     assert request.method == "POST"
@@ -35,5 +42,6 @@ def test_complete_sends_expected_request_and_parses_response():
     assert json.loads(request.content) == {
         "model": "test-model",
         "messages": [{"role": "user", "content": "ping"}],
+        "stream": True,
     }
-    assert result == "pong"
+    assert chunks == ["Hello", " world"]

@@ -1,3 +1,6 @@
+import json
+from collections.abc import Iterator
+
 import httpx
 
 
@@ -17,13 +20,23 @@ class OpenAICompatibleLLMClient:
             transport=transport,
         )
 
-    def complete(self, prompt: str) -> str:
-        response = self._client.post(
+    def stream(self, prompt: str) -> Iterator[str]:
+        with self._client.stream(
+            "POST",
             "/chat/completions",
             json={
                 "model": self._model,
                 "messages": [{"role": "user", "content": prompt}],
+                "stream": True,
             },
-        )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line.removeprefix("data: ")
+                if data == "[DONE]":
+                    break
+                content = json.loads(data)["choices"][0]["delta"].get("content")
+                if content:
+                    yield content

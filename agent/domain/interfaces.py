@@ -1,6 +1,7 @@
+from collections.abc import Iterator
 from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
 class LLMClient(Protocol):
-    def complete(self, prompt: str) -> str: ...
+    def stream(self, prompt: str) -> Iterator[str]: ...
