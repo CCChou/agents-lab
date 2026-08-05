@@ -1,8 +1,15 @@
 from collections.abc import Iterator
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
+
+from agent.domain.message import Message, Role
+
+_ROLE_TO_LANGCHAIN_MESSAGE: dict[Role, type[BaseMessage]] = {
+    "user": HumanMessage,
+    "assistant": AIMessage,
+}
 
 
 class OpenAICompatibleLLMClient:
@@ -20,7 +27,11 @@ class OpenAICompatibleLLMClient:
             model=model,
         )
 
-    def stream(self, prompt: str) -> Iterator[str]:
-        for chunk in self._chat_model.stream([HumanMessage(content=prompt)]):
+    def stream(self, messages: list[Message]) -> Iterator[str]:
+        langchain_messages = [
+            _ROLE_TO_LANGCHAIN_MESSAGE[message.role](content=message.content)
+            for message in messages
+        ]
+        for chunk in self._chat_model.stream(langchain_messages):
             if chunk.content:
                 yield chunk.content

@@ -2,16 +2,17 @@ import io
 from collections.abc import Iterator
 
 from agent.adapters.cli import GOODBYE_MESSAGE, WELCOME_MESSAGE, run
+from agent.domain.message import Message
 from agent.use_cases.chat import Chat
 
 
 class FakeLLMClient:
-    def stream(self, prompt: str) -> Iterator[str]:
-        yield f"echo: {prompt}"
+    def stream(self, messages: list[Message]) -> Iterator[str]:
+        yield f"echo: {messages[-1].content}"
 
 
 class ChunkedFakeLLMClient:
-    def stream(self, prompt: str) -> Iterator[str]:
+    def stream(self, messages: list[Message]) -> Iterator[str]:
         yield "Hel"
         yield "lo"
 

@@ -15,7 +15,7 @@ A general agents that could chat with.
 - Package management: `uv`, dependencies in `pyproject.toml`
 - Testing: `pytest`
 - Linting/formatting: `ruff`
-- HTTP client (for adapters): `httpx`
+- LLM Framework: `langchain`
 
 ## TDD Workflow (must follow)
 
