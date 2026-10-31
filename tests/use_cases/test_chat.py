@@ -8,7 +8,7 @@ from agent.use_cases.chat import Chat
 
 
 class FakeLLMClient:
-    def __init__(self, replies: list[list[str | ToolCall]]) -> None:
+    def __init__(self, replies: list[list[str | ToolCall] | Exception]) -> None:
         self._replies = iter(replies)
         self.received_messages_per_call: list[list[Message]] = []
         self.received_tools_per_call: list[list[Tool] | None] = []
@@ -18,7 +18,10 @@ class FakeLLMClient:
     ) -> Iterator[str | ToolCall]:
         self.received_messages_per_call.append(messages)
         self.received_tools_per_call.append(tools)
-        yield from next(self._replies)
+        reply = next(self._replies)
+        if isinstance(reply, Exception):
+            raise reply
+        yield from reply
 
 
 class FakeTool:
@@ -170,14 +173,88 @@ def test_send_reports_unknown_tool_back_to_the_llm_instead_of_raising():
 
 def test_send_stops_after_max_tool_iterations_instead_of_looping_forever():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
-    llm_client = FakeLLMClient(replies=[[tool_call]] * 10)
+    llm_client = FakeLLMClient(replies=[[tool_call]] * 3 + [["partial answer"]])
     tool = FakeTool(name="lookup", result="r")
     chat = Chat(llm_client, tools=[tool], max_tool_iterations=3)
 
+    list(chat.send("do something"))
+
+    assert len(llm_client.received_messages_per_call) == 4
+
+
+def test_send_asks_for_a_final_answer_without_tools_after_reaching_the_limit():
+    tool_call = ToolCall(id="call_1", name="lookup", arguments={})
+    llm_client = FakeLLMClient(replies=[[tool_call], ["partial answer"]])
+    tool = FakeTool(name="lookup", result="r")
+    chat = Chat(llm_client, tools=[tool], max_tool_iterations=1)
+
     reply_chunks = list(chat.send("do something"))
 
-    assert len(llm_client.received_messages_per_call) == 3
-    assert any("工具" in chunk for chunk in reply_chunks)
+    assert llm_client.received_tools_per_call == [[tool], None]
+    assert "partial answer" in reply_chunks
+
+
+def test_tool_call_at_the_limit_gets_a_result_without_being_executed():
+    tool_call = ToolCall(id="call_1", name="lookup", arguments={"q": "x"})
+    llm_client = FakeLLMClient(replies=[[tool_call], ["partial answer"]])
+    tool = FakeTool(name="lookup", result="r")
+    chat = Chat(llm_client, tools=[tool], max_tool_iterations=1)
+
+    list(chat.send("do something"))
+
+    assert tool.received_arguments is None
+    tool_result = llm_client.received_messages_per_call[1][-1]
+    assert tool_result.role == "tool"
+    assert tool_result.tool_call_id == "call_1"
+    assert "上限" in tool_result.content
+
+
+def test_every_tool_call_has_a_result_in_the_next_turn_after_reaching_the_limit():
+    first_call = ToolCall(id="call_1", name="lookup", arguments={})
+    second_call = ToolCall(id="call_2", name="lookup", arguments={})
+    llm_client = FakeLLMClient(replies=[[first_call, second_call], ["partial"], ["next answer"]])
+    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+
+    list(chat.send("do something"))
+    list(chat.send("and now"))
+
+    next_turn_messages = llm_client.received_messages_per_call[2]
+    answered_ids = {m.tool_call_id for m in next_turn_messages if m.role == "tool"}
+    assert answered_ids == {"call_1", "call_2"}
+
+
+def test_tool_call_in_the_final_answer_still_gets_a_result_in_the_next_turn():
+    first_call = ToolCall(id="call_1", name="lookup", arguments={})
+    unexpected_call = ToolCall(id="call_2", name="lookup", arguments={})
+    llm_client = FakeLLMClient(replies=[[first_call], ["partial", unexpected_call], ["next"]])
+    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+
+    list(chat.send("do something"))
+    list(chat.send("and now"))
+
+    next_turn_messages = llm_client.received_messages_per_call[2]
+    answered_ids = {m.tool_call_id for m in next_turn_messages if m.role == "tool"}
+    assert answered_ids == {"call_1", "call_2"}
+
+
+def test_send_reports_the_limit_when_the_final_answer_request_fails():
+    tool_call = ToolCall(id="call_1", name="lookup", arguments={})
+    llm_client = FakeLLMClient(replies=[[tool_call], RuntimeError("tools required")])
+    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+
+    reply_chunks = list(chat.send("do something"))
+
+    assert any("上限" in chunk for chunk in reply_chunks)
+
+
+def test_send_reports_the_limit_when_the_final_answer_is_empty():
+    tool_call = ToolCall(id="call_1", name="lookup", arguments={})
+    llm_client = FakeLLMClient(replies=[[tool_call], []])
+    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+
+    reply_chunks = list(chat.send("do something"))
+
+    assert any("上限" in chunk for chunk in reply_chunks)
 
 
 def test_send_reports_tool_execution_error_back_to_the_llm_instead_of_raising():

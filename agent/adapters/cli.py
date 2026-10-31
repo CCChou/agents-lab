@@ -8,6 +8,7 @@ WELCOME_MESSAGE = (
     "Welcome! Type a message and press Enter to chat. Type 'exit' or 'quit' to leave.\n"
 )
 GOODBYE_MESSAGE = "Goodbye!\n"
+ERROR_PREFIX = "Error: "
 PROMPT = "> "
 
 Renderer = Callable[[str, TextIO], None]
@@ -37,8 +38,11 @@ def run(
             continue
         if message in EXIT_COMMANDS:
             break
-        for chunk in chat.send(message):
-            render(chunk, output)
-            output.flush()
+        try:
+            for chunk in chat.send(message):
+                render(chunk, output)
+                output.flush()
+        except Exception as exc:  # noqa: BLE001 - an LLM failure should not end the session
+            output.write(f"{ERROR_PREFIX}{exc}")
         output.write("\n")
     output.write(GOODBYE_MESSAGE)

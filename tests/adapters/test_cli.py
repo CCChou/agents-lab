@@ -1,7 +1,7 @@
 import io
 from collections.abc import Iterator
 
-from agent.adapters.cli import GOODBYE_MESSAGE, PROMPT, WELCOME_MESSAGE, run
+from agent.adapters.cli import ERROR_PREFIX, GOODBYE_MESSAGE, PROMPT, WELCOME_MESSAGE, run
 from agent.domain.message import Message
 from agent.use_cases.chat import Chat
 
@@ -15,6 +15,17 @@ class ChunkedFakeLLMClient:
     def stream(self, messages: list[Message], tools=None) -> Iterator[str]:
         yield "Hel"
         yield "lo"
+
+
+class FailsOnceFakeLLMClient:
+    def __init__(self) -> None:
+        self._failed = False
+
+    def stream(self, messages: list[Message], tools=None) -> Iterator[str]:
+        if not self._failed:
+            self._failed = True
+            raise RuntimeError("connection lost")
+        yield "recovered"
 
 
 def test_run_prints_welcome_message_first_and_goodbye_message_last():
@@ -96,3 +107,20 @@ def test_run_sends_each_reply_chunk_through_the_given_renderer():
 
     assert rendered_calls == [("echo: hello", output)]
     assert "<<echo: hello>>" in output.getvalue()
+
+
+def test_run_reports_llm_errors_and_keeps_the_session_alive():
+    chat = Chat(FailsOnceFakeLLMClient())
+    output = io.StringIO()
+
+    run(chat, ["hello", "again"], output)
+
+    assert output.getvalue() == (
+        WELCOME_MESSAGE
+        + PROMPT
+        + f"{ERROR_PREFIX}connection lost\n"
+        + PROMPT
+        + "recovered\n"
+        + PROMPT
+        + GOODBYE_MESSAGE
+    )
