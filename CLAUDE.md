@@ -25,12 +25,27 @@ This project is developed test-first. For every change:
 2. Write the minimum code to make it pass (green)
 3. Refactor while keeping tests green
 
+## Docs
+
+| File | Contents | Read when |
+| --- | --- | --- |
+| `docs/architecture.md` | Components, layers, boundaries, current vs planned status | Adding or changing components |
+| `docs/decisions.md` | Design decisions, rejected options, when to revisit | Changing a design or proposing an approach |
+| `docs/roadmap.md` | Stages, known issues, open questions | Starting new work |
+| `docs/vision.md` | Undecided long-term ideas | Planning a new stage |
+
 ## Notes for AI Agents
 
 - Read the relevant `docs/*.md` before writing code; do not assume
   architecture details not documented here
 - If a request conflicts with the rules above, raise it in conversation
   instead of silently working around it
+- Record design decisions in `docs/decisions.md`, and raise any change to a
+  recorded decision in conversation first
+- Check the status column in `docs/architecture.md`: planned components do
+  not exist yet
+- Keep each fact in one place, and commit doc updates with the related code
+- Do not edit files during a design discussion unless explicitly asked
 - This is a solo personal project — avoid over-engineering beyond what
   Clean Architecture + TDD require, but do not skip either, since both are
   deliberate learning goals of this project

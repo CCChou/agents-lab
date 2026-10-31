@@ -1,0 +1,105 @@
+# 架構
+
+目標是把共用機制拆成元件，讓新增 agent 不需要改動 runtime。設計原因見 `docs/decisions.md`。
+
+> **注意**：本文件同時描述現況與目標設計。實作前先看「現況」欄，標示「計畫中」的元件尚不存在。
+
+## 分層
+
+採用 Clean Architecture，所有依賴最後都指向 `domain`。`*` 代表先保留位置、後續階段才實作。
+
+```text
+┌─ composition ─────────────────────────────────────────┐
+│  __main__.py    config.py    agents/*.py              │
+└───────────────────────────┬───────────────────────────┘
+                            │ wires everything
+                            ▼
+┌─ entry adapters ──────────────────────────────────────┐
+│  CLI              LINE*              Scheduler*       │
+└──────────┬────────────────────────────────▲───────────┘
+           │ AgentRequest                   │ Event
+           ▼                                │
+┌─ use_cases ───────────────────────────────┴───────────┐
+│  Agent implementations:                               │
+│    LoopAgent(spec)        DigestAgent*                │
+│  Shared by LoopAgent:                                 │
+│    ContextBuilder         ToolRegistry                │
+└───────────────────────────┬───────────────────────────┘
+                            │ depends on
+                            ▼
+┌─ domain ──────────────────────────────────────────────┐
+│  Ports: Agent  LLMClient  Tool  Policy*               │
+│         ConversationStore  MemoryStore*  BlobStore*   │
+│  Data:  AgentSpec  AgentRequest  Event                │
+│         Message  ContentPart  ToolCall                │
+└───────────────────────────▲───────────────────────────┘
+                            │ implements
+┌─ infrastructure adapters ─┴───────────────────────────┐
+│  OpenAICompatibleLLMClient    MinifluxQueryTool       │
+│  InMemoryConversationStore    SqliteStores*           │
+└───────────────────────────────────────────────────────┘
+```
+
+## 元件
+
+| 元件 | 層 | 職責 | 現況 |
+| --- | --- | --- | --- |
+| `Chat` | use_cases | 對話記憶與工具呼叫迴圈 | 已實作，將拆成 `LoopAgent`、`AgentSpec`、`ConversationStore` |
+| `Agent` | domain 介面 | 所有 agent 的共同入口：收請求、出事件 | 計畫中（階段 1） |
+| `LoopAgent` | use_cases | 通用工具迴圈，由 LLM 決定流程 | 計畫中（階段 1） |
+| `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具 | 計畫中（階段 1） |
+| `AgentRequest` | domain 資料 | 統一的輸入格式 | 計畫中（階段 1） |
+| `Event` | domain 資料 | 統一的輸出格式 | 計畫中（階段 1） |
+| `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 計畫中（階段 1） |
+| `ToolRegistry` | use_cases | 依名稱找到工具 | 計畫中（階段 1） |
+| `ConversationStore` | domain 介面 | 短期記憶，依 session 讀寫 | 計畫中（階段 1，先做記憶體版） |
+| `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
+| `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
+| `Message` | domain 資料 | 對話訊息 | 已實作，`content` 目前是字串，將改成 `ContentPart` 區塊 |
+| `ToolCall` | domain 資料 | LLM 要求的工具呼叫 | 已實作 |
+| `Policy` | domain 介面 | 判斷工具呼叫要允許、確認或拒絕 | 計畫中（階段 5） |
+| `MemoryStore` | domain 介面 | 長期記憶，依問題和範圍搜尋 | 計畫中（階段 5） |
+| `BlobStore` | domain 介面 | 保存圖片等檔案 | 計畫中，需要多模態時才加 |
+| `DigestAgent` | use_cases | 第一個 workflow：大量文章摘要 | 計畫中（階段 3） |
+
+## 邊界規則
+
+- 入口只透過 `Agent` 介面溝通，不知道背後是哪種實作。
+- 由 LLM 決定流程的 agent 使用 `AgentSpec` + `LoopAgent`；由程式決定流程的 workflow 自行實作 `Agent`。
+- `LoopAgent` 不知道模型或工具的具體實作，一律透過介面使用。
+- 組裝層依 `AgentSpec` 指定的模型建立 `LLMClient`。
+- 訊息只保存檔案參照，不保存檔案內容。
+
+## 現行訊息流程
+
+1. `cli.run` 讀取輸入，呼叫 `Chat.send()`。
+2. `Chat` 把訊息存進歷史，連同工具清單送給 `LLMClient.stream()`。
+3. LLM 只回文字時，輸出文字並結束這一輪。
+4. LLM 要求呼叫工具時，`Chat` 執行工具，把結果放回歷史，再回到第 2 步。
+5. 第 2 到 4 步最多執行 `max_tool_iterations` 次（預設 5）。
+
+工具執行失敗或工具不存在時，錯誤訊息會回傳給 LLM，不會中斷對話。
+
+## 擴充方式
+
+### 新增工具（現行）
+
+1. 在 `tests/adapters/` 先寫失敗的測試。
+2. 在 `agent/adapters/` 實作 `Tool` Protocol。
+3. 在 `agent/__main__.py` 的 `_build_tools()` 註冊。
+
+### 新增 agent（完成階段 1 後）
+
+- 對話型：在 `agent/agents/` 新增一個 `AgentSpec` 並註冊。
+- Workflow：實作 `Agent` 並註冊。
+
+如果新增 agent 需要改動 runtime，代表元件拆分有問題，要先提出來討論。
+
+## 測試方式
+
+- Use case 測試用假的 `LLMClient`，不打真實 API。
+- Adapter 測試注入假的依賴，例如 `chat_model` 或 HTTP client。
+
+## 執行方式
+
+`uv run python -m agent`。環境變數見 `agent/config.py`；`AGENT_DEBUG` 和工具的啟用條件見 `agent/__main__.py`。
