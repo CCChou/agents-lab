@@ -21,10 +21,10 @@ class Chat:
         self._history: list[Message] = []
         self._max_tool_iterations = max_tool_iterations
         if system_prompt:
-            self._history.append(Message(role="system", content=system_prompt))
+            self._history.append(Message.from_text("system", system_prompt))
 
     def send(self, message: str) -> Iterator[str]:
-        self._history.append(Message(role="user", content=message))
+        self._history.append(Message.from_text("user", message))
         iterations = 0
         tools = list(self._tools.values()) or None
         while True:
@@ -44,7 +44,7 @@ class Chat:
                 notice = f"\n[使用工具: {call.name} arguments={call.arguments}]\n"
                 yield notice
                 self._history.append(
-                    Message(role="tool", content=self._run_tool(call), tool_call_id=call.id)
+                    Message.from_text("tool", self._run_tool(call), tool_call_id=call.id)
                 )
 
     def _ask_llm(self, tools: list[Tool] | None) -> tuple[str, list[ToolCall]]:
@@ -58,7 +58,7 @@ class Chat:
 
         reply_text = "".join(text_chunks)
         self._history.append(
-            Message(role="assistant", content=reply_text, tool_calls=tool_calls or None)
+            Message.from_text("assistant", reply_text, tool_calls=tool_calls or None)
         )
         return reply_text, tool_calls
 
@@ -73,9 +73,7 @@ class Chat:
 
     def _decline_tool_calls(self, tool_calls: list[ToolCall]) -> None:
         for call in tool_calls:
-            self._history.append(
-                Message(role="tool", content=TOOL_LIMIT_RESULT, tool_call_id=call.id)
-            )
+            self._history.append(Message.from_text("tool", TOOL_LIMIT_RESULT, tool_call_id=call.id))
 
     def _run_tool(self, call: ToolCall) -> str:
         tool = self._tools.get(call.name)

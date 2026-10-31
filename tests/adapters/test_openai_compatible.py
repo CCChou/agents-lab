@@ -64,9 +64,9 @@ def test_stream_converts_messages_to_langchain_messages_and_yields_content_chunk
     chunks = list(
         client.stream(
             [
-                Message(role="user", content="hi"),
-                Message(role="assistant", content="hello"),
-                Message(role="user", content="ping"),
+                Message.from_text("user", "hi"),
+                Message.from_text("assistant", "hello"),
+                Message.from_text("user", "ping"),
             ]
         )
     )
@@ -78,9 +78,7 @@ def test_stream_converts_messages_to_langchain_messages_and_yields_content_chunk
 
 
 def test_stream_skips_empty_chunks():
-    fake_chat_model = FakeChatModel(
-        chunks=[FakeChunk("Hello"), FakeChunk(""), FakeChunk(" world")]
-    )
+    fake_chat_model = FakeChatModel(chunks=[FakeChunk("Hello"), FakeChunk(""), FakeChunk(" world")])
     client = OpenAICompatibleLLMClient(
         base_url="https://example.test/v1",
         api_key="key",
@@ -88,7 +86,7 @@ def test_stream_skips_empty_chunks():
         chat_model=fake_chat_model,
     )
 
-    chunks = list(client.stream([Message(role="user", content="ping")]))
+    chunks = list(client.stream([Message.from_text("user", "ping")]))
 
     assert chunks == ["Hello", " world"]
 
@@ -105,8 +103,8 @@ def test_stream_converts_system_role_to_system_message():
     list(
         client.stream(
             [
-                Message(role="system", content="be terse"),
-                Message(role="user", content="hi"),
+                Message.from_text("system", "be terse"),
+                Message.from_text("user", "hi"),
             ]
         )
     )
@@ -125,7 +123,7 @@ def test_stream_converts_tool_role_to_tool_message_with_call_id():
         chat_model=fake_chat_model,
     )
 
-    list(client.stream([Message(role="tool", content="72F", tool_call_id="call_1")]))
+    list(client.stream([Message.from_text("tool", "72F", tool_call_id="call_1")]))
 
     sent = fake_chat_model.received_messages
     assert type(sent[0]).__name__ == "ToolMessage"
@@ -145,9 +143,9 @@ def test_stream_converts_assistant_tool_calls_to_ai_message_tool_calls():
     list(
         client.stream(
             [
-                Message(
-                    role="assistant",
-                    content="",
+                Message.from_text(
+                    "assistant",
+                    "",
                     tool_calls=[ToolCall(id="call_1", name="lookup", arguments={"q": "x"})],
                 )
             ]
@@ -169,7 +167,7 @@ def test_stream_binds_tools_to_the_chat_model_in_openai_function_format():
         chat_model=fake_chat_model,
     )
 
-    list(client.stream([Message(role="user", content="hi")], tools=[FakeTool()]))
+    list(client.stream([Message.from_text("user", "hi")], tools=[FakeTool()]))
 
     assert fake_chat_model.bound_tools == [
         {
@@ -197,6 +195,6 @@ def test_stream_yields_tool_calls_after_the_final_accumulated_chunk():
         chat_model=fake_chat_model,
     )
 
-    events = list(client.stream([Message(role="user", content="hi")], tools=[FakeTool()]))
+    events = list(client.stream([Message.from_text("user", "hi")], tools=[FakeTool()]))
 
     assert events == [ToolCall(id="call_1", name="lookup", arguments={"q": "x"})]

@@ -55,7 +55,7 @@
 | `ConversationStore` | domain 介面 | 短期記憶，依 session 讀寫 | 計畫中（階段 1，先做記憶體版） |
 | `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
 | `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
-| `Message` | domain 資料 | 對話訊息 | 已實作，`content` 目前是字串，將改成 `ContentPart` 區塊 |
+| `Message` | domain 資料 | 對話訊息 | 已實作，`ContentPart` 目前只有 `TextPart` |
 | `ToolCall` | domain 資料 | LLM 要求的工具呼叫 | 已實作 |
 | `Policy` | domain 介面 | 判斷工具呼叫要允許、確認或拒絕 | 計畫中（階段 5） |
 | `MemoryStore` | domain 介面 | 長期記憶，依問題和範圍搜尋 | 計畫中（階段 5） |

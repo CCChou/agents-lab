@@ -50,7 +50,7 @@ def test_send_forwards_the_message_and_yields_the_joined_llm_reply():
     reply_chunks = list(chat.send("hi"))
 
     assert reply_chunks == ["hello there"]
-    assert llm_client.received_messages_per_call == [[Message(role="user", content="hi")]]
+    assert llm_client.received_messages_per_call == [[Message.from_text("user", "hi")]]
 
 
 def test_send_includes_prior_turns_in_the_next_request():
@@ -61,9 +61,9 @@ def test_send_includes_prior_turns_in_the_next_request():
     list(chat.send("how are you"))
 
     assert llm_client.received_messages_per_call[1] == [
-        Message(role="user", content="hello"),
-        Message(role="assistant", content="hi there"),
-        Message(role="user", content="how are you"),
+        Message.from_text("user", "hello"),
+        Message.from_text("assistant", "hi there"),
+        Message.from_text("user", "how are you"),
     ]
 
 
@@ -74,8 +74,8 @@ def test_send_prepends_system_prompt_when_configured():
     list(chat.send("hello"))
 
     assert llm_client.received_messages_per_call[0] == [
-        Message(role="system", content="You are terse."),
-        Message(role="user", content="hello"),
+        Message.from_text("system", "You are terse."),
+        Message.from_text("user", "hello"),
     ]
 
 
@@ -88,7 +88,7 @@ def test_system_prompt_is_not_repeated_across_turns():
 
     second_call_messages = llm_client.received_messages_per_call[1]
     system_messages = [m for m in second_call_messages if m.role == "system"]
-    assert system_messages == [Message(role="system", content="Be terse.")]
+    assert system_messages == [Message.from_text("system", "Be terse.")]
 
 
 def test_no_system_message_when_system_prompt_not_given():
@@ -97,7 +97,7 @@ def test_no_system_message_when_system_prompt_not_given():
 
     list(chat.send("hello"))
 
-    assert llm_client.received_messages_per_call[0] == [Message(role="user", content="hello")]
+    assert llm_client.received_messages_per_call[0] == [Message.from_text("user", "hello")]
 
 
 def test_send_passes_no_tools_when_none_configured():
@@ -130,8 +130,8 @@ def test_send_executes_tool_call_and_feeds_result_back_to_the_llm():
     assert tool.received_arguments == {"q": "weather"}
     assert "it is sunny" in reply_chunks
     second_call_messages = llm_client.received_messages_per_call[1]
-    assert second_call_messages[-1] == Message(
-        role="tool", content="72F and clear", tool_call_id="call_1"
+    assert second_call_messages[-1] == Message.from_text(
+        "tool", "72F and clear", tool_call_id="call_1"
     )
 
 
@@ -168,7 +168,7 @@ def test_send_reports_unknown_tool_back_to_the_llm_instead_of_raising():
 
     tool_result = llm_client.received_messages_per_call[1][-1]
     assert tool_result.role == "tool"
-    assert "nonexistent" in tool_result.content
+    assert "nonexistent" in tool_result.text
 
 
 def test_send_stops_after_max_tool_iterations_instead_of_looping_forever():
@@ -206,7 +206,7 @@ def test_tool_call_at_the_limit_gets_a_result_without_being_executed():
     tool_result = llm_client.received_messages_per_call[1][-1]
     assert tool_result.role == "tool"
     assert tool_result.tool_call_id == "call_1"
-    assert "上限" in tool_result.content
+    assert "上限" in tool_result.text
 
 
 def test_every_tool_call_has_a_result_in_the_next_turn_after_reaching_the_limit():
@@ -267,4 +267,4 @@ def test_send_reports_tool_execution_error_back_to_the_llm_instead_of_raising():
 
     tool_result = llm_client.received_messages_per_call[1][-1]
     assert tool_result.role == "tool"
-    assert "boom" in tool_result.content
+    assert "boom" in tool_result.text

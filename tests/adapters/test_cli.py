@@ -8,7 +8,7 @@ from agent.use_cases.chat import Chat
 
 class FakeLLMClient:
     def stream(self, messages: list[Message], tools=None) -> Iterator[str]:
-        yield f"echo: {messages[-1].content}"
+        yield f"echo: {messages[-1].text}"
 
 
 class ChunkedFakeLLMClient:

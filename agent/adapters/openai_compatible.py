@@ -21,13 +21,13 @@ def _to_openai_tool_spec(tool: Tool) -> dict:
 
 def _to_langchain_message(message: Message) -> BaseMessage:
     if message.role == "user":
-        return HumanMessage(content=message.content)
+        return HumanMessage(content=message.text)
     if message.role == "system":
-        return SystemMessage(content=message.content)
+        return SystemMessage(content=message.text)
     if message.role == "tool":
-        return ToolMessage(content=message.content, tool_call_id=message.tool_call_id)
+        return ToolMessage(content=message.text, tool_call_id=message.tool_call_id)
     return AIMessage(
-        content=message.content,
+        content=message.text,
         tool_calls=[
             {"id": call.id, "name": call.name, "args": call.arguments}
             for call in (message.tool_calls or [])
