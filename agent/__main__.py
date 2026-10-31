@@ -6,6 +6,7 @@ from collections.abc import Iterator
 import httpx
 
 from agent.adapters.cli import run
+from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.adapters.miniflux import MinifluxQueryTool
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
 from agent.config import LLMConfig, MinifluxConfig
@@ -48,7 +49,12 @@ def main() -> None:
         api_key=config.api_key,
         model=config.model,
     )
-    chat = Chat(llm_client, system_prompt=config.system_prompt, tools=_build_tools())
+    chat = Chat(
+        llm_client,
+        InMemoryConversationStore(),
+        system_prompt=config.system_prompt,
+        tools=_build_tools(),
+    )
     run(chat, _stdin_lines(), sys.stdout)
 
 

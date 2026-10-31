@@ -2,6 +2,8 @@ from collections.abc import Iterable
 from typing import TextIO
 
 from agent.domain.event import Event, TextDelta, ToolLimitReached, ToolStarted
+from agent.domain.message import Message
+from agent.domain.request import AgentRequest
 from agent.use_cases.chat import Chat
 
 EXIT_COMMANDS = {"exit", "quit"}
@@ -12,6 +14,7 @@ GOODBYE_MESSAGE = "Goodbye!\n"
 ERROR_PREFIX = "Error: "
 TOOL_LIMIT_NOTICE = "\n[已達到工具呼叫上限，停止重試]\n"
 PROMPT = "> "
+SESSION_ID = "cli"
 
 
 def _write_event(event: Event, output: TextIO) -> None:
@@ -40,7 +43,8 @@ def run(chat: Chat, input_lines: Iterable[str], output: TextIO) -> None:
         if message in EXIT_COMMANDS:
             break
         try:
-            for event in chat.send(message):
+            request = AgentRequest(SESSION_ID, Message.from_text("user", message))
+            for event in chat.send(request):
                 _write_event(event, output)
                 output.flush()
         except Exception as exc:  # noqa: BLE001 - an LLM failure should not end the session

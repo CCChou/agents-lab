@@ -1,11 +1,23 @@
 from collections.abc import Iterator
 from typing import Any
 
+import pytest
+
+from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.domain.event import TextDelta, ToolLimitReached, ToolStarted
 from agent.domain.interfaces import LLMClient
 from agent.domain.message import Message
+from agent.domain.request import AgentRequest
 from agent.domain.tool import Tool, ToolCall
 from agent.use_cases.chat import Chat
+
+
+def make_chat(llm_client, store=None, **kwargs) -> Chat:
+    return Chat(llm_client, store or InMemoryConversationStore(), **kwargs)
+
+
+def request(text: str, session_id: str = "s1") -> AgentRequest:
+    return AgentRequest(session_id=session_id, message=Message.from_text("user", text))
 
 
 class FakeLLMClient:
@@ -46,9 +58,9 @@ def test_fake_satisfies_llm_client_port():
 
 def test_send_forwards_the_message_and_streams_each_llm_chunk():
     llm_client = FakeLLMClient(replies=[["hello ", "there"]])
-    chat = Chat(llm_client)
+    chat = make_chat(llm_client)
 
-    events = list(chat.send("hi"))
+    events = list(chat.send(request("hi")))
 
     assert events == [TextDelta("hello "), TextDelta("there")]
     assert llm_client.received_messages_per_call == [[Message.from_text("user", "hi")]]
@@ -60,17 +72,17 @@ def test_send_yields_text_before_the_llm_finishes():
             yield "first"
             raise AssertionError("send read past the first chunk")
 
-    events = Chat(StopsAfterFirstChunk()).send("hi")
+    events = make_chat(StopsAfterFirstChunk()).send(request("hi"))
 
     assert next(events) == TextDelta("first")
 
 
 def test_send_records_the_joined_reply_in_history():
     llm_client = FakeLLMClient(replies=[["hello ", "there"], ["ok"]])
-    chat = Chat(llm_client)
+    chat = make_chat(llm_client)
 
-    list(chat.send("hi"))
-    list(chat.send("again"))
+    list(chat.send(request("hi")))
+    list(chat.send(request("again")))
 
     assert llm_client.received_messages_per_call[1][1] == Message.from_text(
         "assistant", "hello there"
@@ -79,10 +91,10 @@ def test_send_records_the_joined_reply_in_history():
 
 def test_send_includes_prior_turns_in_the_next_request():
     llm_client = FakeLLMClient(replies=[["hi there"], ["I'm good, thanks"]])
-    chat = Chat(llm_client)
+    chat = make_chat(llm_client)
 
-    list(chat.send("hello"))
-    list(chat.send("how are you"))
+    list(chat.send(request("hello")))
+    list(chat.send(request("how are you")))
 
     assert llm_client.received_messages_per_call[1] == [
         Message.from_text("user", "hello"),
@@ -93,9 +105,9 @@ def test_send_includes_prior_turns_in_the_next_request():
 
 def test_send_prepends_system_prompt_when_configured():
     llm_client = FakeLLMClient(replies=[["hi"]])
-    chat = Chat(llm_client, system_prompt="You are terse.")
+    chat = make_chat(llm_client, system_prompt="You are terse.")
 
-    list(chat.send("hello"))
+    list(chat.send(request("hello")))
 
     assert llm_client.received_messages_per_call[0] == [
         Message.from_text("system", "You are terse."),
@@ -105,10 +117,10 @@ def test_send_prepends_system_prompt_when_configured():
 
 def test_system_prompt_is_not_repeated_across_turns():
     llm_client = FakeLLMClient(replies=[["hi there"], ["I'm good"]])
-    chat = Chat(llm_client, system_prompt="Be terse.")
+    chat = make_chat(llm_client, system_prompt="Be terse.")
 
-    list(chat.send("hello"))
-    list(chat.send("how are you"))
+    list(chat.send(request("hello")))
+    list(chat.send(request("how are you")))
 
     second_call_messages = llm_client.received_messages_per_call[1]
     system_messages = [m for m in second_call_messages if m.role == "system"]
@@ -117,18 +129,18 @@ def test_system_prompt_is_not_repeated_across_turns():
 
 def test_no_system_message_when_system_prompt_not_given():
     llm_client = FakeLLMClient(replies=[["hi"]])
-    chat = Chat(llm_client)
+    chat = make_chat(llm_client)
 
-    list(chat.send("hello"))
+    list(chat.send(request("hello")))
 
     assert llm_client.received_messages_per_call[0] == [Message.from_text("user", "hello")]
 
 
 def test_send_passes_no_tools_when_none_configured():
     llm_client = FakeLLMClient(replies=[["hi"]])
-    chat = Chat(llm_client)
+    chat = make_chat(llm_client)
 
-    list(chat.send("hello"))
+    list(chat.send(request("hello")))
 
     assert llm_client.received_tools_per_call == [None]
 
@@ -136,9 +148,9 @@ def test_send_passes_no_tools_when_none_configured():
 def test_send_passes_configured_tools_to_the_llm_client():
     llm_client = FakeLLMClient(replies=[["hi"]])
     tool = FakeTool(name="lookup")
-    chat = Chat(llm_client, tools=[tool])
+    chat = make_chat(llm_client, tools=[tool])
 
-    list(chat.send("hello"))
+    list(chat.send(request("hello")))
 
     assert llm_client.received_tools_per_call == [[tool]]
 
@@ -147,9 +159,9 @@ def test_send_executes_tool_call_and_feeds_result_back_to_the_llm():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={"q": "weather"})
     llm_client = FakeLLMClient(replies=[[tool_call], ["it is sunny"]])
     tool = FakeTool(name="lookup", result="72F and clear")
-    chat = Chat(llm_client, tools=[tool])
+    chat = make_chat(llm_client, tools=[tool])
 
-    events = list(chat.send("what's the weather"))
+    events = list(chat.send(request("what's the weather")))
 
     assert tool.received_arguments == {"q": "weather"}
     assert TextDelta("it is sunny") in events
@@ -163,9 +175,9 @@ def test_assistant_message_with_tool_call_is_recorded_in_history():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={"q": "x"})
     llm_client = FakeLLMClient(replies=[[tool_call], ["final"]])
     tool = FakeTool(name="lookup", result="r")
-    chat = Chat(llm_client, tools=[tool])
+    chat = make_chat(llm_client, tools=[tool])
 
-    list(chat.send("hi"))
+    list(chat.send(request("hi")))
 
     second_call_messages = llm_client.received_messages_per_call[1]
     assistant_message = next(m for m in second_call_messages if m.role == "assistant")
@@ -176,9 +188,9 @@ def test_send_announces_tool_call_before_executing_it():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={"q": "weather"})
     llm_client = FakeLLMClient(replies=[[tool_call], ["it is sunny"]])
     tool = FakeTool(name="lookup", result="72F and clear")
-    chat = Chat(llm_client, tools=[tool])
+    chat = make_chat(llm_client, tools=[tool])
 
-    events = chat.send("what's the weather")
+    events = chat.send(request("what's the weather"))
 
     assert next(events) == ToolStarted(name="lookup", arguments={"q": "weather"})
     assert tool.received_arguments is None
@@ -187,9 +199,9 @@ def test_send_announces_tool_call_before_executing_it():
 def test_send_reports_unknown_tool_back_to_the_llm_instead_of_raising():
     tool_call = ToolCall(id="call_1", name="nonexistent", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], ["fallback answer"]])
-    chat = Chat(llm_client, tools=[])
+    chat = make_chat(llm_client, tools=[])
 
-    list(chat.send("do something"))
+    list(chat.send(request("do something")))
 
     tool_result = llm_client.received_messages_per_call[1][-1]
     assert tool_result.role == "tool"
@@ -200,9 +212,9 @@ def test_send_stops_after_max_tool_iterations_instead_of_looping_forever():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call]] * 3 + [["partial answer"]])
     tool = FakeTool(name="lookup", result="r")
-    chat = Chat(llm_client, tools=[tool], max_tool_iterations=3)
+    chat = make_chat(llm_client, tools=[tool], max_tool_iterations=3)
 
-    list(chat.send("do something"))
+    list(chat.send(request("do something")))
 
     assert len(llm_client.received_messages_per_call) == 4
 
@@ -211,9 +223,9 @@ def test_send_asks_for_a_final_answer_without_tools_after_reaching_the_limit():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], ["partial answer"]])
     tool = FakeTool(name="lookup", result="r")
-    chat = Chat(llm_client, tools=[tool], max_tool_iterations=1)
+    chat = make_chat(llm_client, tools=[tool], max_tool_iterations=1)
 
-    events = list(chat.send("do something"))
+    events = list(chat.send(request("do something")))
 
     assert llm_client.received_tools_per_call == [[tool], None]
     assert TextDelta("partial answer") in events
@@ -224,9 +236,9 @@ def test_tool_call_at_the_limit_gets_a_result_without_being_executed():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={"q": "x"})
     llm_client = FakeLLMClient(replies=[[tool_call], ["partial answer"]])
     tool = FakeTool(name="lookup", result="r")
-    chat = Chat(llm_client, tools=[tool], max_tool_iterations=1)
+    chat = make_chat(llm_client, tools=[tool], max_tool_iterations=1)
 
-    list(chat.send("do something"))
+    list(chat.send(request("do something")))
 
     assert tool.received_arguments is None
     tool_result = llm_client.received_messages_per_call[1][-1]
@@ -239,10 +251,10 @@ def test_every_tool_call_has_a_result_in_the_next_turn_after_reaching_the_limit(
     first_call = ToolCall(id="call_1", name="lookup", arguments={})
     second_call = ToolCall(id="call_2", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[first_call, second_call], ["partial"], ["next answer"]])
-    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+    chat = make_chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
 
-    list(chat.send("do something"))
-    list(chat.send("and now"))
+    list(chat.send(request("do something")))
+    list(chat.send(request("and now")))
 
     next_turn_messages = llm_client.received_messages_per_call[2]
     answered_ids = {m.tool_call_id for m in next_turn_messages if m.role == "tool"}
@@ -253,10 +265,10 @@ def test_tool_call_in_the_final_answer_still_gets_a_result_in_the_next_turn():
     first_call = ToolCall(id="call_1", name="lookup", arguments={})
     unexpected_call = ToolCall(id="call_2", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[first_call], ["partial", unexpected_call], ["next"]])
-    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+    chat = make_chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
 
-    list(chat.send("do something"))
-    list(chat.send("and now"))
+    list(chat.send(request("do something")))
+    list(chat.send(request("and now")))
 
     next_turn_messages = llm_client.received_messages_per_call[2]
     answered_ids = {m.tool_call_id for m in next_turn_messages if m.role == "tool"}
@@ -266,9 +278,9 @@ def test_tool_call_in_the_final_answer_still_gets_a_result_in_the_next_turn():
 def test_send_reports_the_limit_when_the_final_answer_request_fails():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], RuntimeError("tools required")])
-    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+    chat = make_chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
 
-    events = list(chat.send("do something"))
+    events = list(chat.send(request("do something")))
 
     assert ToolLimitReached() in events
 
@@ -276,9 +288,9 @@ def test_send_reports_the_limit_when_the_final_answer_request_fails():
 def test_send_reports_the_limit_when_the_final_answer_is_empty():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], []])
-    chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+    chat = make_chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
 
-    events = list(chat.send("do something"))
+    events = list(chat.send(request("do something")))
 
     assert ToolLimitReached() in events
 
@@ -287,10 +299,64 @@ def test_send_reports_tool_execution_error_back_to_the_llm_instead_of_raising():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], ["fallback answer"]])
     tool = FakeTool(name="lookup", result=RuntimeError("boom"))
-    chat = Chat(llm_client, tools=[tool])
+    chat = make_chat(llm_client, tools=[tool])
 
-    list(chat.send("do something"))
+    list(chat.send(request("do something")))
 
     tool_result = llm_client.received_messages_per_call[1][-1]
     assert tool_result.role == "tool"
     assert "boom" in tool_result.text
+
+
+def test_sessions_do_not_share_history():
+    llm_client = FakeLLMClient(replies=[["first"], ["second"]])
+    chat = make_chat(llm_client)
+
+    list(chat.send(request("hello", session_id="s1")))
+    list(chat.send(request("hi", session_id="s2")))
+
+    assert llm_client.received_messages_per_call[1] == [Message.from_text("user", "hi")]
+
+
+def test_system_prompt_is_sent_but_not_stored():
+    llm_client = FakeLLMClient(replies=[["hi"]])
+    store = InMemoryConversationStore()
+    chat = make_chat(llm_client, store, system_prompt="Be terse.")
+
+    list(chat.send(request("hello")))
+
+    assert all(message.role != "system" for message in store.load("s1"))
+
+
+def test_failed_turn_is_not_stored():
+    llm_client = FakeLLMClient(replies=[RuntimeError("connection lost"), ["ok"]])
+    chat = make_chat(llm_client)
+
+    with pytest.raises(RuntimeError):
+        list(chat.send(request("lost")))
+    list(chat.send(request("retry")))
+
+    assert llm_client.received_messages_per_call[1] == [Message.from_text("user", "retry")]
+
+
+def test_turn_that_fails_after_a_tool_call_is_not_stored():
+    tool_call = ToolCall(id="call_1", name="lookup", arguments={})
+    llm_client = FakeLLMClient(replies=[[tool_call], RuntimeError("connection lost")])
+    store = InMemoryConversationStore()
+    chat = make_chat(llm_client, store, tools=[FakeTool(name="lookup")])
+
+    with pytest.raises(RuntimeError):
+        list(chat.send(request("do something")))
+
+    assert store.load("s1") == []
+
+
+def test_turn_that_ends_with_the_limit_notice_is_stored():
+    tool_call = ToolCall(id="call_1", name="lookup", arguments={})
+    llm_client = FakeLLMClient(replies=[[tool_call], RuntimeError("tools required")])
+    store = InMemoryConversationStore()
+    chat = make_chat(llm_client, store, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
+
+    list(chat.send(request("do something")))
+
+    assert [message.role for message in store.load("s1")] == ["user", "assistant", "tool"]

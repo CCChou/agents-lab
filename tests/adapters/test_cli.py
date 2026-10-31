@@ -9,8 +9,10 @@ from agent.adapters.cli import (
     WELCOME_MESSAGE,
     run,
 )
+from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.domain.event import Event, ToolLimitReached, ToolStarted
 from agent.domain.message import Message
+from agent.domain.request import AgentRequest
 from agent.use_cases.chat import Chat
 
 
@@ -39,13 +41,15 @@ class FailsOnceFakeLLMClient:
 class ScriptedChat:
     def __init__(self, events: list[Event]) -> None:
         self._events = events
+        self.requests: list[AgentRequest] = []
 
-    def send(self, message: str) -> Iterator[Event]:
+    def send(self, request: AgentRequest) -> Iterator[Event]:
+        self.requests.append(request)
         yield from self._events
 
 
 def test_run_prints_welcome_message_first_and_goodbye_message_last():
-    chat = Chat(FakeLLMClient())
+    chat = Chat(FakeLLMClient(), InMemoryConversationStore())
     output = io.StringIO()
 
     run(chat, [], output)
@@ -54,7 +58,7 @@ def test_run_prints_welcome_message_first_and_goodbye_message_last():
 
 
 def test_run_sends_each_line_to_chat_and_prints_the_reply():
-    chat = Chat(FakeLLMClient())
+    chat = Chat(FakeLLMClient(), InMemoryConversationStore())
     output = io.StringIO()
 
     run(chat, ["hello", "world"], output)
@@ -71,7 +75,7 @@ def test_run_sends_each_line_to_chat_and_prints_the_reply():
 
 
 def test_run_writes_each_chunk_as_it_arrives():
-    chat = Chat(ChunkedFakeLLMClient())
+    chat = Chat(ChunkedFakeLLMClient(), InMemoryConversationStore())
     output = io.StringIO()
 
     run(chat, ["hi"], output)
@@ -80,7 +84,7 @@ def test_run_writes_each_chunk_as_it_arrives():
 
 
 def test_run_stops_on_exit_command():
-    chat = Chat(FakeLLMClient())
+    chat = Chat(FakeLLMClient(), InMemoryConversationStore())
     output = io.StringIO()
 
     run(chat, ["hello", "exit", "should not be sent"], output)
@@ -91,7 +95,7 @@ def test_run_stops_on_exit_command():
 
 
 def test_run_skips_blank_lines():
-    chat = Chat(FakeLLMClient())
+    chat = Chat(FakeLLMClient(), InMemoryConversationStore())
     output = io.StringIO()
 
     run(chat, ["", "   ", "hi"], output)
@@ -102,12 +106,24 @@ def test_run_skips_blank_lines():
 
 
 def test_run_prints_a_prompt_before_reading_each_line():
-    chat = Chat(FakeLLMClient())
+    chat = Chat(FakeLLMClient(), InMemoryConversationStore())
     output = io.StringIO()
 
     run(chat, ["hello"], output)
 
     assert PROMPT in output.getvalue()
+
+
+def test_run_sends_every_line_in_the_same_session():
+    chat = ScriptedChat([])
+
+    run(chat, ["hello", "world"], io.StringIO())
+
+    assert [r.message for r in chat.requests] == [
+        Message.from_text("user", "hello"),
+        Message.from_text("user", "world"),
+    ]
+    assert chat.requests[0].session_id == chat.requests[1].session_id
 
 
 def test_run_announces_tool_use():
@@ -129,7 +145,7 @@ def test_run_reports_when_the_tool_limit_is_reached():
 
 
 def test_run_reports_llm_errors_and_keeps_the_session_alive():
-    chat = Chat(FailsOnceFakeLLMClient())
+    chat = Chat(FailsOnceFakeLLMClient(), InMemoryConversationStore())
     output = io.StringIO()
 
     run(chat, ["hello", "again"], output)
