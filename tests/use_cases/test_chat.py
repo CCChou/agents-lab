@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from typing import Any
 
+from agent.domain.event import TextDelta, ToolLimitReached, ToolStarted
 from agent.domain.interfaces import LLMClient
 from agent.domain.message import Message
 from agent.domain.tool import Tool, ToolCall
@@ -43,14 +44,37 @@ def test_fake_satisfies_llm_client_port():
     assert isinstance(FakeLLMClient(replies=[]), LLMClient)
 
 
-def test_send_forwards_the_message_and_yields_the_joined_llm_reply():
+def test_send_forwards_the_message_and_streams_each_llm_chunk():
     llm_client = FakeLLMClient(replies=[["hello ", "there"]])
     chat = Chat(llm_client)
 
-    reply_chunks = list(chat.send("hi"))
+    events = list(chat.send("hi"))
 
-    assert reply_chunks == ["hello there"]
+    assert events == [TextDelta("hello "), TextDelta("there")]
     assert llm_client.received_messages_per_call == [[Message.from_text("user", "hi")]]
+
+
+def test_send_yields_text_before_the_llm_finishes():
+    class StopsAfterFirstChunk:
+        def stream(self, messages, tools=None):
+            yield "first"
+            raise AssertionError("send read past the first chunk")
+
+    events = Chat(StopsAfterFirstChunk()).send("hi")
+
+    assert next(events) == TextDelta("first")
+
+
+def test_send_records_the_joined_reply_in_history():
+    llm_client = FakeLLMClient(replies=[["hello ", "there"], ["ok"]])
+    chat = Chat(llm_client)
+
+    list(chat.send("hi"))
+    list(chat.send("again"))
+
+    assert llm_client.received_messages_per_call[1][1] == Message.from_text(
+        "assistant", "hello there"
+    )
 
 
 def test_send_includes_prior_turns_in_the_next_request():
@@ -125,10 +149,10 @@ def test_send_executes_tool_call_and_feeds_result_back_to_the_llm():
     tool = FakeTool(name="lookup", result="72F and clear")
     chat = Chat(llm_client, tools=[tool])
 
-    reply_chunks = list(chat.send("what's the weather"))
+    events = list(chat.send("what's the weather"))
 
     assert tool.received_arguments == {"q": "weather"}
-    assert "it is sunny" in reply_chunks
+    assert TextDelta("it is sunny") in events
     second_call_messages = llm_client.received_messages_per_call[1]
     assert second_call_messages[-1] == Message.from_text(
         "tool", "72F and clear", tool_call_id="call_1"
@@ -154,9 +178,10 @@ def test_send_announces_tool_call_before_executing_it():
     tool = FakeTool(name="lookup", result="72F and clear")
     chat = Chat(llm_client, tools=[tool])
 
-    reply_chunks = list(chat.send("what's the weather"))
+    events = chat.send("what's the weather")
 
-    assert any("lookup" in chunk for chunk in reply_chunks)
+    assert next(events) == ToolStarted(name="lookup", arguments={"q": "weather"})
+    assert tool.received_arguments is None
 
 
 def test_send_reports_unknown_tool_back_to_the_llm_instead_of_raising():
@@ -188,10 +213,11 @@ def test_send_asks_for_a_final_answer_without_tools_after_reaching_the_limit():
     tool = FakeTool(name="lookup", result="r")
     chat = Chat(llm_client, tools=[tool], max_tool_iterations=1)
 
-    reply_chunks = list(chat.send("do something"))
+    events = list(chat.send("do something"))
 
     assert llm_client.received_tools_per_call == [[tool], None]
-    assert "partial answer" in reply_chunks
+    assert TextDelta("partial answer") in events
+    assert ToolLimitReached() not in events
 
 
 def test_tool_call_at_the_limit_gets_a_result_without_being_executed():
@@ -242,9 +268,9 @@ def test_send_reports_the_limit_when_the_final_answer_request_fails():
     llm_client = FakeLLMClient(replies=[[tool_call], RuntimeError("tools required")])
     chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
 
-    reply_chunks = list(chat.send("do something"))
+    events = list(chat.send("do something"))
 
-    assert any("上限" in chunk for chunk in reply_chunks)
+    assert ToolLimitReached() in events
 
 
 def test_send_reports_the_limit_when_the_final_answer_is_empty():
@@ -252,9 +278,9 @@ def test_send_reports_the_limit_when_the_final_answer_is_empty():
     llm_client = FakeLLMClient(replies=[[tool_call], []])
     chat = Chat(llm_client, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
 
-    reply_chunks = list(chat.send("do something"))
+    events = list(chat.send("do something"))
 
-    assert any("上限" in chunk for chunk in reply_chunks)
+    assert ToolLimitReached() in events
 
 
 def test_send_reports_tool_execution_error_back_to_the_llm_instead_of_raising():

@@ -1,7 +1,15 @@
 import io
 from collections.abc import Iterator
 
-from agent.adapters.cli import ERROR_PREFIX, GOODBYE_MESSAGE, PROMPT, WELCOME_MESSAGE, run
+from agent.adapters.cli import (
+    ERROR_PREFIX,
+    GOODBYE_MESSAGE,
+    PROMPT,
+    TOOL_LIMIT_NOTICE,
+    WELCOME_MESSAGE,
+    run,
+)
+from agent.domain.event import Event, ToolLimitReached, ToolStarted
 from agent.domain.message import Message
 from agent.use_cases.chat import Chat
 
@@ -26,6 +34,14 @@ class FailsOnceFakeLLMClient:
             self._failed = True
             raise RuntimeError("connection lost")
         yield "recovered"
+
+
+class ScriptedChat:
+    def __init__(self, events: list[Event]) -> None:
+        self._events = events
+
+    def send(self, message: str) -> Iterator[Event]:
+        yield from self._events
 
 
 def test_run_prints_welcome_message_first_and_goodbye_message_last():
@@ -94,19 +110,22 @@ def test_run_prints_a_prompt_before_reading_each_line():
     assert PROMPT in output.getvalue()
 
 
-def test_run_sends_each_reply_chunk_through_the_given_renderer():
-    chat = Chat(FakeLLMClient())
+def test_run_announces_tool_use():
+    chat = ScriptedChat([ToolStarted(name="lookup", arguments={"q": "x"})])
     output = io.StringIO()
-    rendered_calls: list[tuple[str, io.StringIO]] = []
 
-    def fake_renderer(text: str, out: io.StringIO) -> None:
-        rendered_calls.append((text, out))
-        out.write(f"<<{text}>>")
+    run(chat, ["hi"], output)
 
-    run(chat, ["hello"], output, render=fake_renderer)
+    assert "[使用工具: lookup arguments={'q': 'x'}]" in output.getvalue()
 
-    assert rendered_calls == [("echo: hello", output)]
-    assert "<<echo: hello>>" in output.getvalue()
+
+def test_run_reports_when_the_tool_limit_is_reached():
+    chat = ScriptedChat([ToolLimitReached()])
+    output = io.StringIO()
+
+    run(chat, ["hi"], output)
+
+    assert TOOL_LIMIT_NOTICE in output.getvalue()
 
 
 def test_run_reports_llm_errors_and_keeps_the_session_alive():

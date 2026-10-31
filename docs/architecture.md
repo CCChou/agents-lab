@@ -49,7 +49,7 @@
 | `LoopAgent` | use_cases | 通用工具迴圈，由 LLM 決定流程 | 計畫中（階段 1） |
 | `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具 | 計畫中（階段 1） |
 | `AgentRequest` | domain 資料 | 統一的輸入格式 | 計畫中（階段 1） |
-| `Event` | domain 資料 | 統一的輸出格式 | 計畫中（階段 1） |
+| `Event` | domain 資料 | 統一的輸出格式 | 已實作：`TextDelta`、`ToolStarted`、`ToolLimitReached` |
 | `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 計畫中（階段 1） |
 | `ToolRegistry` | use_cases | 依名稱找到工具 | 計畫中（階段 1） |
 | `ConversationStore` | domain 介面 | 短期記憶，依 session 讀寫 | 計畫中（階段 1，先做記憶體版） |
@@ -74,8 +74,8 @@
 
 1. `cli.run` 讀取輸入，呼叫 `Chat.send()`。
 2. `Chat` 把訊息存進歷史，連同工具清單送給 `LLMClient.stream()`。
-3. LLM 只回文字時，輸出文字並結束這一輪。
-4. LLM 要求呼叫工具時，`Chat` 執行工具，把結果放回歷史，再回到第 2 步。
+3. LLM 的文字以 `TextDelta` 即時輸出。沒有工具呼叫時，結束這一輪。
+4. LLM 要求呼叫工具時，`Chat` 輸出 `ToolStarted` 並執行工具，把結果放回歷史，再回到第 2 步。
 5. 第 2 到 4 步最多執行 `max_tool_iterations` 次（預設 5）。達到上限時，補上工具結果，再以不提供工具的方式要求 LLM 回答一次。
 
 工具執行失敗或工具不存在時，錯誤訊息會回傳給 LLM，不會中斷對話。LLM 呼叫失敗時，`cli.run` 顯示錯誤並繼續對話。

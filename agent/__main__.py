@@ -2,11 +2,8 @@ import logging
 import os
 import sys
 from collections.abc import Iterator
-from typing import TextIO
 
 import httpx
-from rich.console import Console
-from rich.markdown import Markdown
 
 from agent.adapters.cli import run
 from agent.adapters.miniflux import MinifluxQueryTool
@@ -27,10 +24,6 @@ def _stdin_lines() -> Iterator[str]:
             yield input()
         except EOFError:
             return
-
-
-def _render_markdown(text: str, output: TextIO) -> None:
-    Console(file=output).print(Markdown(text))
 
 
 def _build_tools() -> list[Tool]:
@@ -56,7 +49,7 @@ def main() -> None:
         model=config.model,
     )
     chat = Chat(llm_client, system_prompt=config.system_prompt, tools=_build_tools())
-    run(chat, _stdin_lines(), sys.stdout, render=_render_markdown)
+    run(chat, _stdin_lines(), sys.stdout)
 
 
 if __name__ == "__main__":
