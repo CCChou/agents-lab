@@ -24,14 +24,14 @@
 - 修正工具呼叫上限的 bug（見 D-014）
 - 讓 CLI 能處理 LLM 錯誤，不會中斷對話
 
-### 階段 1：架構拆解
+### 階段 1：架構拆解（已完成）
 
 練習重點：Clean Architecture、元件邊界。目標元件見 `docs/architecture.md`。
 
 - [x] 把 `Chat` 拆成 `LoopAgent`、`AgentSpec`、`ConversationStore`
 - [x] 新增 `Agent`、`AgentRequest`、`Event`、`ContextBuilder`、`ToolRegistry`
 - [x] `Message` 改成內容區塊，先只實作 `TextPart`
-- [ ] CLI 加上 `--agent`，用 `general` 和 `rss` 驗證新增 agent 不需要改動 runtime
+- [x] 新增 `rss` agent（見 D-017）
 
 ### 階段 2：單篇與少量文章摘要
 
@@ -86,6 +86,7 @@
 
 ## 暫緩
 
+- `--agent` 和第二個 agent（見 D-017）
 - 通用工具：網頁搜尋、讀取網頁、讀寫本地檔案
 - Web UI
 - Router、MCP（見 D-013）

@@ -9,8 +9,8 @@ from agent.adapters.cli import run
 from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.adapters.miniflux import MinifluxQueryTool
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
+from agent.agents.rss import build_rss_spec
 from agent.config import LLMConfig, MinifluxConfig
-from agent.domain.agent_spec import AgentSpec
 from agent.domain.tool import Tool
 from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
@@ -31,8 +31,6 @@ def _stdin_lines() -> Iterator[str]:
 
 
 def _build_tools() -> list[Tool]:
-    if "MINIFLUX_BASE_URL" not in os.environ or "MINIFLUX_API_KEY" not in os.environ:
-        return []
     miniflux_config = MinifluxConfig.from_env()
     client = httpx.Client(
         base_url=miniflux_config.base_url,
@@ -48,11 +46,7 @@ def main() -> None:
 
     config = LLMConfig.from_env()
     tools = _build_tools()
-    spec = AgentSpec(
-        name="default",
-        system_prompt=config.system_prompt,
-        tools=tuple(tool.name for tool in tools),
-    )
+    spec = build_rss_spec(config.system_prompt)
     llm_client = OpenAICompatibleLLMClient(
         base_url=config.base_url,
         api_key=config.api_key,

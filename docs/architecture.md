@@ -46,7 +46,7 @@
 | --- | --- | --- | --- |
 | `Agent` | domain 介面 | 所有 agent 的共同入口：收請求、出事件 | 已實作 |
 | `LoopAgent` | use_cases | 通用工具迴圈，由 LLM 決定流程 | 已實作 |
-| `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具、工具上限 | 已實作，目前由 `__main__.py` 依環境變數建立 |
+| `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具、工具上限 | 已實作，定義放在 `agent/agents/` |
 | `AgentRequest` | domain 資料 | 統一的輸入格式：session 和使用者訊息 | 已實作 |
 | `Event` | domain 資料 | 統一的輸出格式 | 已實作：`TextDelta`、`ToolStarted`、`ToolLimitReached` |
 | `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 已實作，目前只組合指令和對話 |
@@ -88,10 +88,12 @@
 2. 在 `agent/adapters/` 實作 `Tool` Protocol。
 3. 在 `agent/__main__.py` 的 `_build_tools()` 註冊。
 
-### 新增 agent（完成階段 1 後）
+### 新增 agent
 
-- 對話型：在 `agent/agents/` 新增一個 `AgentSpec` 並註冊。
-- Workflow：實作 `Agent` 並註冊。
+- 對話型：在 `agent/agents/` 新增一個 `AgentSpec`。
+- Workflow：實作 `Agent`。
+
+目前 `__main__.py` 只組裝 `rss`。新增第二個 agent 時，要同時加入選擇 agent 的方式（見 D-017）。
 
 如果新增 agent 需要改動 runtime，代表元件拆分有問題，要先提出來討論。
 
@@ -102,4 +104,4 @@
 
 ## 執行方式
 
-`uv run python -m agent`。環境變數見 `agent/config.py`；`AGENT_DEBUG` 和工具的啟用條件見 `agent/__main__.py`。
+`uv run python -m agent`。環境變數見 `agent/config.py`，`AGENT_DEBUG` 見 `agent/__main__.py`。`rss` agent 需要 Miniflux 設定才能啟動。
