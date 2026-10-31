@@ -44,14 +44,13 @@
 
 | 元件 | 層 | 職責 | 現況 |
 | --- | --- | --- | --- |
-| `Chat` | use_cases | 工具呼叫迴圈 | 已實作，將拆成 `LoopAgent`、`AgentSpec` |
-| `Agent` | domain 介面 | 所有 agent 的共同入口：收請求、出事件 | 計畫中（階段 1） |
-| `LoopAgent` | use_cases | 通用工具迴圈，由 LLM 決定流程 | 計畫中（階段 1） |
-| `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具 | 計畫中（階段 1） |
+| `Agent` | domain 介面 | 所有 agent 的共同入口：收請求、出事件 | 已實作 |
+| `LoopAgent` | use_cases | 通用工具迴圈，由 LLM 決定流程 | 已實作 |
+| `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具、工具上限 | 已實作，目前由 `__main__.py` 依環境變數建立 |
 | `AgentRequest` | domain 資料 | 統一的輸入格式：session 和使用者訊息 | 已實作 |
 | `Event` | domain 資料 | 統一的輸出格式 | 已實作：`TextDelta`、`ToolStarted`、`ToolLimitReached` |
-| `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 計畫中（階段 1） |
-| `ToolRegistry` | use_cases | 依名稱找到工具 | 計畫中（階段 1） |
+| `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 已實作，目前只組合指令和對話 |
+| `ToolRegistry` | use_cases | 依名稱找到工具，名稱不存在時在啟動就報錯 | 已實作 |
 | `ConversationStore` | domain 介面 | 短期記憶，依 session 讀寫 | 已實作，目前只有 `InMemoryConversationStore` |
 | `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
 | `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
@@ -67,16 +66,17 @@
 - 入口只透過 `Agent` 介面溝通，不知道背後是哪種實作。
 - 由 LLM 決定流程的 agent 使用 `AgentSpec` + `LoopAgent`；由程式決定流程的 workflow 自行實作 `Agent`。
 - `LoopAgent` 不知道模型或工具的具體實作，一律透過介面使用。
-- 組裝層依 `AgentSpec` 指定的模型建立 `LLMClient`。
+- 組裝層依 `AgentSpec` 指定的模型建立 `LLMClient`；`model` 為 `None` 時使用環境變數的預設模型。
+- `LoopAgent` 只能使用 `AgentSpec` 列出的工具，即使 registry 裡有其他工具。
 - 訊息只保存檔案參照，不保存檔案內容。
 
-## 現行訊息流程
+## 現行訊息流程（`LoopAgent`）
 
-1. `cli.run` 讀取輸入，呼叫 `Chat.send()`。
-2. `Chat` 從 `ConversationStore` 讀取歷史，加上 system prompt 和新訊息，連同工具清單送給 `LLMClient.stream()`。
+1. `cli.run` 讀取輸入，呼叫 `Agent.run()`。
+2. `LoopAgent` 透過 `ContextBuilder` 取得 system prompt 和歷史，加上新訊息，連同 `AgentSpec` 列出的工具送給 `LLMClient.stream()`。
 3. LLM 的文字以 `TextDelta` 即時輸出。沒有工具呼叫時，結束這一輪。
-4. LLM 要求呼叫工具時，`Chat` 輸出 `ToolStarted` 並執行工具，把結果加入這一輪的訊息，再回到第 2 步。
-5. 第 2 到 4 步最多執行 `max_tool_iterations` 次（預設 5）。達到上限時，補上工具結果，再以不提供工具的方式要求 LLM 回答一次。
+4. LLM 要求呼叫工具時，`LoopAgent` 輸出 `ToolStarted` 並執行工具，把結果加入這一輪的訊息，再回到第 2 步。
+5. 第 2 到 4 步最多執行 `AgentSpec.max_tool_iterations` 次（預設 5）。達到上限時，補上工具結果，再以不提供工具的方式要求 LLM 回答一次。
 
 工具執行失敗或工具不存在時，錯誤訊息會回傳給 LLM，不會中斷對話。這一輪完成後，才把訊息寫入 `ConversationStore`。LLM 呼叫失敗時，這一輪不會保存，`cli.run` 顯示錯誤並繼續對話。
 

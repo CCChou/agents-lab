@@ -2,9 +2,9 @@ from collections.abc import Iterable
 from typing import TextIO
 
 from agent.domain.event import Event, TextDelta, ToolLimitReached, ToolStarted
+from agent.domain.interfaces import Agent
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
-from agent.use_cases.chat import Chat
 
 EXIT_COMMANDS = {"exit", "quit"}
 WELCOME_MESSAGE = (
@@ -27,7 +27,7 @@ def _write_event(event: Event, output: TextIO) -> None:
             output.write(TOOL_LIMIT_NOTICE)
 
 
-def run(chat: Chat, input_lines: Iterable[str], output: TextIO) -> None:
+def run(agent: Agent, input_lines: Iterable[str], output: TextIO) -> None:
     output.write(WELCOME_MESSAGE)
     lines = iter(input_lines)
     while True:
@@ -44,7 +44,7 @@ def run(chat: Chat, input_lines: Iterable[str], output: TextIO) -> None:
             break
         try:
             request = AgentRequest(SESSION_ID, Message.from_text("user", message))
-            for event in chat.send(request):
+            for event in agent.run(request):
                 _write_event(event, output)
                 output.flush()
         except Exception as exc:  # noqa: BLE001 - an LLM failure should not end the session

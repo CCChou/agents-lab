@@ -10,8 +10,11 @@ from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.adapters.miniflux import MinifluxQueryTool
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
 from agent.config import LLMConfig, MinifluxConfig
+from agent.domain.agent_spec import AgentSpec
 from agent.domain.tool import Tool
-from agent.use_cases.chat import Chat
+from agent.use_cases.context_builder import ContextBuilder
+from agent.use_cases.loop_agent import LoopAgent
+from agent.use_cases.tool_registry import ToolRegistry
 
 try:
     import readline  # noqa: F401 - importing enables input() history/line-editing
@@ -44,18 +47,20 @@ def main() -> None:
         logging.basicConfig(level=logging.DEBUG)
 
     config = LLMConfig.from_env()
+    tools = _build_tools()
+    spec = AgentSpec(
+        name="default",
+        system_prompt=config.system_prompt,
+        tools=tuple(tool.name for tool in tools),
+    )
     llm_client = OpenAICompatibleLLMClient(
         base_url=config.base_url,
         api_key=config.api_key,
-        model=config.model,
+        model=spec.model or config.model,
     )
-    chat = Chat(
-        llm_client,
-        InMemoryConversationStore(),
-        system_prompt=config.system_prompt,
-        tools=_build_tools(),
-    )
-    run(chat, _stdin_lines(), sys.stdout)
+    store = InMemoryConversationStore()
+    agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
+    run(agent, _stdin_lines(), sys.stdout)
 
 
 if __name__ == "__main__":

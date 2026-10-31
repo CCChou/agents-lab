@@ -28,10 +28,10 @@
 
 練習重點：Clean Architecture、元件邊界。目標元件見 `docs/architecture.md`。
 
-- 把 `Chat` 拆成 `LoopAgent`、`AgentSpec`、`ConversationStore`
-- 新增 `Agent`、`AgentRequest`、`Event`、`ContextBuilder`、`ToolRegistry`
-- `Message` 改成內容區塊，先只實作 `TextPart`
-- CLI 加上 `--agent`，用 `general` 和 `rss` 驗證新增 agent 不需要改動 runtime
+- [x] 把 `Chat` 拆成 `LoopAgent`、`AgentSpec`、`ConversationStore`
+- [x] 新增 `Agent`、`AgentRequest`、`Event`、`ContextBuilder`、`ToolRegistry`
+- [x] `Message` 改成內容區塊，先只實作 `TextPart`
+- [ ] CLI 加上 `--agent`，用 `general` 和 `rss` 驗證新增 agent 不需要改動 runtime
 
 ### 階段 2：單篇與少量文章摘要
 

@@ -1,40 +1,38 @@
 from collections.abc import Generator, Iterator
 
+from agent.domain.agent_spec import AgentSpec
 from agent.domain.event import Event, TextDelta, ToolLimitReached, ToolStarted
 from agent.domain.interfaces import ConversationStore, LLMClient
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
 from agent.domain.tool import Tool, ToolCall
+from agent.use_cases.context_builder import ContextBuilder
+from agent.use_cases.tool_registry import ToolRegistry
 
 TOOL_LIMIT_RESULT = "未執行：已達到工具呼叫上限。請根據目前資訊回答，並說明缺少哪些內容。"
 
 
-class Chat:
+class LoopAgent:
     def __init__(
         self,
+        spec: AgentSpec,
         llm_client: LLMClient,
         store: ConversationStore,
-        system_prompt: str | None = None,
-        tools: list[Tool] | None = None,
-        max_tool_iterations: int = 5,
+        context_builder: ContextBuilder,
+        tool_registry: ToolRegistry,
     ) -> None:
+        self.name = spec.name
+        self._spec = spec
         self._llm_client = llm_client
         self._store = store
-        self._system_prompt = system_prompt
-        self._tools = {tool.name: tool for tool in tools or []}
-        self._max_tool_iterations = max_tool_iterations
+        self._context_builder = context_builder
+        self._tools = {tool.name: tool for tool in tool_registry.get(spec.tools)}
 
-    def send(self, request: AgentRequest) -> Iterator[Event]:
-        context = self._load_context(request.session_id)
+    def run(self, request: AgentRequest) -> Iterator[Event]:
+        context = self._context_builder.build(self._spec, request.session_id)
         messages = [*context, request.message]
         yield from self._run_turn(messages)
         self._store.append(request.session_id, messages[len(context) :])
-
-    def _load_context(self, session_id: str) -> list[Message]:
-        history = self._store.load(session_id)
-        if self._system_prompt:
-            return [Message.from_text("system", self._system_prompt), *history]
-        return history
 
     def _run_turn(self, messages: list[Message]) -> Iterator[Event]:
         iterations = 0
@@ -46,7 +44,7 @@ class Chat:
             if not tool_calls:
                 return
 
-            if iterations >= self._max_tool_iterations:
+            if iterations >= self._spec.max_tool_iterations:
                 yield from self._finish_at_tool_limit(messages, tool_calls)
                 return
 
