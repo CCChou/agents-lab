@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import TextIO
 
 from agent.use_cases.chat import Chat
@@ -8,18 +8,37 @@ WELCOME_MESSAGE = (
     "Welcome! Type a message and press Enter to chat. Type 'exit' or 'quit' to leave.\n"
 )
 GOODBYE_MESSAGE = "Goodbye!\n"
+PROMPT = "> "
+
+Renderer = Callable[[str, TextIO], None]
 
 
-def run(chat: Chat, input_lines: Iterable[str], output: TextIO) -> None:
+def _write_plain(text: str, output: TextIO) -> None:
+    output.write(text)
+
+
+def run(
+    chat: Chat,
+    input_lines: Iterable[str],
+    output: TextIO,
+    render: Renderer = _write_plain,
+) -> None:
     output.write(WELCOME_MESSAGE)
-    for line in input_lines:
+    lines = iter(input_lines)
+    while True:
+        output.write(PROMPT)
+        output.flush()
+        try:
+            line = next(lines)
+        except StopIteration:
+            break
         message = line.strip()
         if not message:
             continue
         if message in EXIT_COMMANDS:
             break
         for chunk in chat.send(message):
-            output.write(chunk)
+            render(chunk, output)
             output.flush()
         output.write("\n")
     output.write(GOODBYE_MESSAGE)
