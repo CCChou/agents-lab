@@ -45,7 +45,8 @@ This project is developed test-first. For every change:
 - Check the status column in `docs/architecture.md`: planned components do
   not exist yet
 - Keep each fact in one place, and commit doc updates with the related code
-- Do not edit files during a design discussion unless explicitly asked
+- Do not edit any file without the user's approval: propose the change in
+  conversation first and wait for a clear go-ahead
 - This is a solo personal project — avoid over-engineering beyond what
   Clean Architecture + TDD require, but do not skip either, since both are
   deliberate learning goals of this project
