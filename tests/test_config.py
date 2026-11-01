@@ -81,6 +81,7 @@ def test_miniflux_config_reads_ca_bundle_path_and_uses_it_for_tls_verify(monkeyp
     monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
     monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
     monkeypatch.setenv("MINIFLUX_CA_BUNDLE", "/etc/ssl/miniflux-ca.pem")
+    monkeypatch.delenv("MINIFLUX_VERIFY_SSL", raising=False)
 
     config = MinifluxConfig.from_env()
 

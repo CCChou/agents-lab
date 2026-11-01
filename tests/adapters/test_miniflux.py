@@ -21,7 +21,9 @@ def _response(json_data, status_code: int = 200) -> httpx.Response:
     return httpx.Response(status_code, json=json_data, request=httpx.Request("GET", "http://test"))
 
 
-def _entry(id: int = 1, title: str = "Some Article", feed_title: str = "Some Feed", status: str = "unread") -> dict:
+def _entry(
+    id: int = 1, title: str = "Some Article", feed_title: str = "Some Feed", status: str = "unread"
+) -> dict:
     return {
         "id": id,
         "title": title,
@@ -61,7 +63,12 @@ def test_run_converts_published_after_and_before_to_unix_timestamps():
     http_client = FakeHttpClient(responses={"/v1/entries": _response({"entries": []})})
     tool = MinifluxQueryTool(client=http_client)
 
-    tool.run({"published_after": "2026-08-20T00:00:00+00:00", "published_before": "2026-08-24T00:00:00+00:00"})
+    tool.run(
+        {
+            "published_after": "2026-08-20T00:00:00+00:00",
+            "published_before": "2026-08-24T00:00:00+00:00",
+        }
+    )
 
     _, params = http_client.requests[0]
     expected_after = int(datetime(2026, 8, 20, tzinfo=UTC).timestamp())
