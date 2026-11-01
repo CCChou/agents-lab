@@ -2,10 +2,12 @@ import logging
 import os
 import sys
 from collections.abc import Iterator
+from datetime import datetime
 
 import httpx
 
 from agent.adapters.cli import run
+from agent.adapters.current_time import CurrentTimeTool
 from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.adapters.miniflux import MinifluxQueryTool
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
@@ -37,7 +39,10 @@ def _build_tools() -> list[Tool]:
         headers={"X-Auth-Token": miniflux_config.api_key},
         verify=miniflux_config.tls_verify,
     )
-    return [MinifluxQueryTool(client=client)]
+    return [
+        MinifluxQueryTool(client=client),
+        CurrentTimeTool(clock=lambda: datetime.now().astimezone()),
+    ]
 
 
 def main() -> None:

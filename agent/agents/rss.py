@@ -1,3 +1,4 @@
+from agent.adapters.current_time import CurrentTimeTool
 from agent.adapters.miniflux import MinifluxQueryTool
 from agent.domain.agent_spec import AgentSpec
 
@@ -11,5 +12,5 @@ def build_rss_spec(system_prompt: str | None = None) -> AgentSpec:
     return AgentSpec(
         name="rss",
         system_prompt=system_prompt or SYSTEM_PROMPT,
-        tools=(MinifluxQueryTool.name,),
+        tools=(MinifluxQueryTool.name, CurrentTimeTool.name),
     )

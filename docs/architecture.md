@@ -36,7 +36,8 @@
                             │ implements
 ┌─ infrastructure adapters ─┴───────────────────────────┐
 │  OpenAICompatibleLLMClient    MinifluxQueryTool       │
-│  InMemoryConversationStore    SqliteStores*           │
+│  InMemoryConversationStore    CurrentTimeTool         │
+│  SqliteStores*                                        │
 └───────────────────────────────────────────────────────┘
 ```
 

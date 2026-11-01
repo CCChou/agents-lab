@@ -154,3 +154,12 @@
 - 原因：目前只需要一個 agent，選擇機制沒有用途。原本移除 `AGENT_SYSTEM_PROMPT` 的理由是有多個 agent，現在不成立。
 - 考慮過但沒選：同時做 `general` 和 `--agent`。代價是「新增 agent 不需要改 runtime」這件事還沒有實際驗證。
 - 重新評估的時機：出現第二個 agent 時，要加入選擇機制，並確認沒有動到 runtime。
+
+## D-018：用工具提供目前時間
+
+- 日期：2026-11-01
+- 狀態：生效中
+- 決定：新增 `get_current_time` 工具，由各 agent 在 `AgentSpec.tools` 自行選用。回傳精確到秒的 ISO 8601 時間和星期，時區使用執行環境的時區。先只靠工具的 `description` 引導模型呼叫，不改 `rss` 的 system prompt。
+- 原因：不是每個 agent 都需要日期，寫進共用的 system prompt 會讓不需要的 agent 也帶著它，而使用者是否會問到日期也無法事先判斷。工具讓每個 agent 自己決定。
+- 考慮過但沒選：由 `ContextBuilder` 加進 system prompt，所有 agent 都會帶到；組裝時寫進 `AgentSpec`，對話跨日後會過期；附在使用者訊息裡，舊日期會留在歷史裡。
+- 重新評估的時機：模型實際使用時不呼叫工具、自己猜日期時，再加 system prompt 指示。工具數量變多、工具定義開始佔掉明顯的 context 時，評估拆成 MCP 或 skill，或改成按需載入（MCP 本身不會減少 context，見 D-013）。使用者時區與執行環境不同時，要另外設定時區（例如階段 6 的常駐程序）。
