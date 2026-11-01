@@ -24,20 +24,24 @@
 │    LoopAgent(spec)        DigestAgent*                │
 │  Shared by LoopAgent:                                 │
 │    ContextBuilder         ToolRegistry                │
+│  Tools:                                               │
+│    SummarizeEntryTool                                 │
 └───────────────────────────┬───────────────────────────┘
                             │ depends on
                             ▼
 ┌─ domain ──────────────────────────────────────────────┐
 │  Ports: Agent  LLMClient  Tool  Policy*               │
 │         ConversationStore  MemoryStore*  BlobStore*   │
+│         ArticleReader                                 │
 │  Data:  AgentSpec  AgentRequest  Event                │
-│         Message  ContentPart  ToolCall                │
+│         Message  ContentPart  ToolCall  Article       │
 └───────────────────────────▲───────────────────────────┘
                             │ implements
 ┌─ infrastructure adapters ─┴───────────────────────────┐
 │  OpenAICompatibleLLMClient    MinifluxQueryTool       │
-│  InMemoryConversationStore    CurrentTimeTool         │
-│  SqliteStores*                                        │
+│  InMemoryConversationStore    MinifluxGetEntryTool    │
+│  CurrentTimeTool              FetchPageTool           │
+│  MinifluxArticleReader        SqliteStores*           │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -50,13 +54,16 @@
 | `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具、工具上限 | 已實作，定義放在 `agent/agents/` |
 | `AgentRequest` | domain 資料 | 統一的輸入格式：session 和使用者訊息 | 已實作 |
 | `Event` | domain 資料 | 統一的輸出格式 | 已實作：`TextDelta`、`ToolStarted`、`ToolLimitReached` |
-| `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 已實作，目前只組合指令和對話 |
+| `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 已實作，目前組合指令和對話，並清除舊的工具結果 |
 | `ToolRegistry` | use_cases | 依名稱找到工具，名稱不存在時在啟動就報錯 | 已實作 |
 | `ConversationStore` | domain 介面 | 短期記憶，依 session 讀寫 | 已實作，目前只有 `InMemoryConversationStore` |
 | `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
 | `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
 | `Message` | domain 資料 | 對話訊息 | 已實作，`ContentPart` 目前只有 `TextPart` |
 | `ToolCall` | domain 資料 | LLM 要求的工具呼叫 | 已實作 |
+| `ArticleReader` | domain 介面 | 依文章 id 讀取內容 | 已實作，目前只有 `MinifluxArticleReader` |
+| `Article` | domain 資料 | 文章的中繼資料和純文字內文 | 已實作 |
+| `SummarizeEntryTool` | use_cases | 用獨立的 LLM 請求摘要一篇文章（見 D-022） | 已實作 |
 | `Policy` | domain 介面 | 判斷工具呼叫要允許、確認或拒絕 | 計畫中（階段 5） |
 | `MemoryStore` | domain 介面 | 長期記憶，依問題和範圍搜尋 | 計畫中（階段 5） |
 | `BlobStore` | domain 介面 | 保存圖片等檔案 | 計畫中，需要多模態時才加 |

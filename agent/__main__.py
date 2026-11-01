@@ -9,13 +9,20 @@ import httpx
 from agent.adapters.cli import run
 from agent.adapters.current_time import CurrentTimeTool
 from agent.adapters.in_memory_store import InMemoryConversationStore
-from agent.adapters.miniflux import MinifluxQueryTool
+from agent.adapters.miniflux import (
+    MinifluxArticleReader,
+    MinifluxGetEntryTool,
+    MinifluxQueryTool,
+)
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
+from agent.adapters.web import FetchPageTool
 from agent.agents.rss import build_rss_spec
 from agent.config import LLMConfig, MinifluxConfig
+from agent.domain.interfaces import LLMClient
 from agent.domain.tool import Tool
 from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
+from agent.use_cases.summarize_entry import SummarizeEntryTool
 from agent.use_cases.tool_registry import ToolRegistry
 
 try:
@@ -32,15 +39,20 @@ def _stdin_lines() -> Iterator[str]:
             return
 
 
-def _build_tools() -> list[Tool]:
+def _build_tools(llm_client: LLMClient) -> list[Tool]:
     miniflux_config = MinifluxConfig.from_env()
     client = httpx.Client(
         base_url=miniflux_config.base_url,
         headers={"X-Auth-Token": miniflux_config.api_key},
         verify=miniflux_config.tls_verify,
     )
+    fetch_page = FetchPageTool(client=httpx.Client(timeout=20))
+    reader = MinifluxArticleReader(client=client, read_page=fetch_page.read_text)
     return [
         MinifluxQueryTool(client=client),
+        MinifluxGetEntryTool(client=client),
+        fetch_page,
+        SummarizeEntryTool(reader=reader, llm_client=llm_client),
         CurrentTimeTool(clock=lambda: datetime.now().astimezone()),
     ]
 
@@ -50,13 +62,13 @@ def main() -> None:
         logging.basicConfig(level=logging.DEBUG)
 
     config = LLMConfig.from_env()
-    tools = _build_tools()
     spec = build_rss_spec(config.system_prompt)
     llm_client = OpenAICompatibleLLMClient(
         base_url=config.base_url,
         api_key=config.api_key,
         model=spec.model or config.model,
     )
+    tools = _build_tools(llm_client)
     store = InMemoryConversationStore()
     agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
     run(agent, _stdin_lines(), sys.stdout)

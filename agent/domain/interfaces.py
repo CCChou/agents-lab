@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from typing import Protocol, runtime_checkable
 
+from agent.domain.article import Article
 from agent.domain.event import Event
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
@@ -26,3 +27,8 @@ class ConversationStore(Protocol):
     def load(self, session_id: str) -> list[Message]: ...
 
     def append(self, session_id: str, messages: list[Message]) -> None: ...
+
+
+@runtime_checkable
+class ArticleReader(Protocol):
+    def read(self, entry_id: int) -> Article: ...
