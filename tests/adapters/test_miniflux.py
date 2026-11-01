@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -29,6 +29,7 @@ def _entry(
         "title": title,
         "url": f"https://example.test/{id}",
         "status": status,
+        "published_at": "2026-11-01T14:00:00Z",
         "feed": {"id": 1, "title": feed_title},
     }
 
@@ -119,6 +120,15 @@ def test_run_formats_entries_as_readable_text():
     assert "Great Article" in result
     assert "Cool Feed" in result
     assert "https://example.test/42" in result
+
+
+def test_run_shows_the_published_time_in_the_given_timezone():
+    http_client = FakeHttpClient(responses={"/v1/entries": _response({"entries": [_entry()]})})
+    tool = MinifluxQueryTool(client=http_client, tz=timezone(timedelta(hours=8)))
+
+    result = tool.run({})
+
+    assert "2026-11-01T22:00:00+08:00" in result
 
 
 def test_run_reports_when_no_entries_found():

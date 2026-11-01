@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Any, ClassVar, Protocol
 
 import httpx
@@ -52,8 +52,9 @@ class MinifluxQueryTool:
         "additionalProperties": False,
     }
 
-    def __init__(self, *, client: _HttpClient) -> None:
+    def __init__(self, *, client: _HttpClient, tz: tzinfo | None = None) -> None:
         self._client = client
+        self._tz = tz
 
     def run(self, arguments: dict[str, Any]) -> str:
         params = self._build_params(arguments)
@@ -87,12 +88,17 @@ class MinifluxQueryTool:
                 return feed["id"]
         raise ValueError(f"No feed found matching '{feed_name}'")
 
-    @staticmethod
-    def _format_entries(entries: list[dict[str, Any]]) -> str:
+    def _format_entries(self, entries: list[dict[str, Any]]) -> str:
         if not entries:
             return "No entries found."
         return "\n".join(
             f"- [{entry['id']}] {entry['title']} "
-            f"({entry['feed']['title']}, {entry['status']}) {entry['url']}"
+            f"({entry['feed']['title']}, {entry['status']}, "
+            f"{self._format_published_at(entry['published_at'])}) {entry['url']}"
             for entry in entries
+        )
+
+    def _format_published_at(self, published_at: str) -> str:
+        return (
+            datetime.fromisoformat(published_at).astimezone(self._tz).isoformat(timespec="seconds")
         )
