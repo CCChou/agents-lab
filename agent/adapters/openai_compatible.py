@@ -7,6 +7,8 @@ from langchain_openai import ChatOpenAI
 from agent.domain.message import Message
 from agent.domain.tool import Tool, ToolCall
 
+INVALID_TOOL_CALL_ERROR = "tool call validation failed"
+
 
 def _to_openai_tool_spec(tool: Tool) -> dict:
     return {
@@ -61,8 +63,22 @@ class OpenAICompatibleLLMClient:
         if tools:
             chat_model = chat_model.bind_tools([_to_openai_tool_spec(tool) for tool in tools])
 
+        sent_output = False
+        try:
+            for event in self._stream_once(chat_model, langchain_messages):
+                sent_output = True
+                yield event
+        except Exception as exc:
+            if sent_output or INVALID_TOOL_CALL_ERROR not in str(exc):
+                raise
+            yield from self._stream_once(chat_model, langchain_messages)
+
+    @staticmethod
+    def _stream_once(
+        chat_model: BaseChatModel, messages: list[BaseMessage]
+    ) -> Iterator[str | ToolCall]:
         accumulated = None
-        for chunk in chat_model.stream(langchain_messages):
+        for chunk in chat_model.stream(messages):
             if chunk.content:
                 yield chunk.content
             accumulated = chunk if accumulated is None else accumulated + chunk

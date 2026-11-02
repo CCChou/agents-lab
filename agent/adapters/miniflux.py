@@ -9,7 +9,7 @@ import httpx
 from agent.adapters.article import format_article, html_to_text
 from agent.domain.article import Article
 
-MAX_LIMIT = 20
+MAX_LIMIT = 15
 MIN_STORED_CHARS = 1000
 
 
@@ -23,6 +23,13 @@ def _format_published_at(published_at: str, tz: tzinfo | None) -> str:
 
 def _interleave(pages: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return [entry for turn in zip_longest(*pages) for entry in turn if entry is not None]
+
+
+def _drop_duplicate_titles(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        unique.setdefault(entry["title"].strip().lower(), entry)
+    return list(unique.values())
 
 
 def _load_article(client: _HttpClient, entry_id: int, tz: tzinfo | None) -> Article:
@@ -44,7 +51,8 @@ class MinifluxQueryTool:
         "Query articles from the user's Miniflux RSS reader. Supports filtering by read status, "
         "category, feed name, a search keyword, and a published date range. Starts with the total "
         "number of matching articles, and with category_name also the shown and total counts of "
-        "each matched category. Then lists each article's id, title, feed, category, read "
+        "each matched category; shown counts include earlier pages. Articles with the same title "
+        "are listed once. Then lists each article's id, title, feed, category, read "
         "status, published time and URL, without the article text. Titles are usually enough for "
         "overviews and trends. Results are sorted newest first; when several categories match, "
         "results take turns between them, so the combined list is not strictly by time."
@@ -99,7 +107,15 @@ class MinifluxQueryTool:
                 "type": "integer",
                 "description": (
                     f"Maximum number of entries to return (default 10, max {MAX_LIMIT}). "
-                    "When several categories match, this limits the combined list."
+                    "With category_name, this applies to each matched category."
+                ),
+            },
+            "offset": {
+                "type": "integer",
+                "description": (
+                    "Number of entries to skip, to read the next page (default 0). Results state "
+                    "the next offset when more entries are available. With category_name, this "
+                    "applies to each matched category."
                 ),
             },
         },
@@ -121,8 +137,7 @@ class MinifluxQueryTool:
         path = "/v1/entries"
         if "feed_name" in arguments:
             path = f"/v1/feeds/{self._resolve_feed_id(arguments['feed_name'])}/entries"
-        page = self._get_page(path, params)
-        return self._format_entries(page["entries"], page["total"])
+        return self._format_result([self._get_page(path, params)], params)
 
     def _query_categories(self, category_name: str, params: dict[str, Any]) -> str:
         categories = self._resolve_categories(category_name)
@@ -130,15 +145,7 @@ class MinifluxQueryTool:
             self._get_page(f"/v1/categories/{category['id']}/entries", params)
             for category in categories
         ]
-        entries = _interleave([page["entries"] for page in pages])[: params["limit"]]
-        shown_ids = {entry["id"] for entry in entries}
-        counts = ", ".join(
-            f"{category['title']} "
-            f"({sum(entry['id'] in shown_ids for entry in page['entries'])} of {page['total']})"
-            for category, page in zip(categories, pages, strict=True)
-        )
-        total = sum(page["total"] for page in pages)
-        return self._format_entries(entries, total, scope=f"Categories: {counts}")
+        return self._format_result(pages, params, [category["title"] for category in categories])
 
     def _get_page(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         response = self._client.get(path, params=params)
@@ -151,7 +158,7 @@ class MinifluxQueryTool:
             "order": "published_at",
             "direction": "desc",
         }
-        for key in ("status", "search"):
+        for key in ("status", "search", "offset"):
             if key in arguments:
                 params[key] = arguments[key]
         for key in ("published_after", "published_before"):
@@ -185,18 +192,38 @@ class MinifluxQueryTool:
                 return feed["id"]
         raise ValueError(f"No feed found matching '{feed_name}'")
 
-    def _format_entries(
-        self, entries: list[dict[str, Any]], total: int, scope: str | None = None
+    def _format_result(
+        self,
+        pages: list[dict[str, Any]],
+        params: dict[str, Any],
+        category_titles: list[str] | None = None,
     ) -> str:
-        lines = [f"Showing {len(entries)} of {total} entries." if entries else "No entries found."]
-        if scope:
-            lines.append(scope)
+        offset = params.get("offset", 0)
+        shown = [min(offset + len(page["entries"]), page["total"]) for page in pages]
+        totals = [page["total"] for page in pages]
+        fetched = _interleave([page["entries"] for page in pages])
+        entries = _drop_duplicate_titles(fetched)
+
+        lines = [
+            f"Showing {sum(shown)} of {sum(totals)} entries." if entries else "No entries found."
+        ]
+        if category_titles:
+            counts = ", ".join(
+                f"{title} ({count} of {total})"
+                for title, count, total in zip(category_titles, shown, totals, strict=True)
+            )
+            lines.append(f"Categories: {counts}")
+        if len(entries) < len(fetched):
+            lines.append(f"Duplicate titles hidden: {len(fetched) - len(entries)}.")
         lines += [
             f"- [{entry['id']}] {entry['title']} "
             f"({entry['feed']['title']}, {entry['feed']['category']['title']}, {entry['status']}, "
             f"{_format_published_at(entry['published_at'], self._tz)}) {entry['url']}"
             for entry in entries
         ]
+        if any(count < total for count, total in zip(shown, totals, strict=True)):
+            next_offset = offset + params["limit"]
+            lines.append(f"More entries available: call again with offset={next_offset}.")
         return "\n".join(lines)
 
 

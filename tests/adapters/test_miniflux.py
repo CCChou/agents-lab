@@ -34,14 +34,14 @@ def _response(json_data, status_code: int = 200) -> httpx.Response:
 
 def _entry(
     id: int = 1,
-    title: str = "Some Article",
+    title: str | None = None,
     feed_title: str = "Some Feed",
     status: str = "unread",
     category: str = "Some Category",
 ) -> dict:
     return {
         "id": id,
-        "title": title,
+        "title": title or ("Some Article" if id == 1 else f"Some Article {id}"),
         "url": f"https://example.test/{id}",
         "status": status,
         "published_at": "2026-11-01T14:00:00Z",
@@ -76,9 +76,9 @@ def test_run_caps_the_limit():
     http_client = FakeHttpClient(responses={"/v1/entries": _response({"entries": []})})
     tool = MinifluxQueryTool(client=http_client)
 
-    tool.run({"limit": 21})
+    tool.run({"limit": 16})
 
-    assert http_client.requests[0][1]["limit"] == 20
+    assert http_client.requests[0][1]["limit"] == 15
 
 
 def test_run_passes_status_and_search_and_custom_limit():
@@ -194,7 +194,7 @@ def test_run_matches_the_start_of_the_category_name_rather_than_any_part():
         tool.run({"category_name": "it"})
 
 
-def test_run_takes_turns_between_categories_and_keeps_the_limit():
+def test_run_applies_the_limit_to_each_category_and_takes_turns():
     http_client = _categories_client(
         {
             1: {"entries": [_entry(id=11), _entry(id=12), _entry(id=13)]},
@@ -203,11 +203,12 @@ def test_run_takes_turns_between_categories_and_keeps_the_limit():
     )
     tool = MinifluxQueryTool(client=http_client)
 
-    result = tool.run({"category_name": "news", "limit": 3})
+    result = tool.run({"category_name": "news", "limit": 15})
 
-    assert "[11]" in result and "[21]" in result and "[12]" in result
-    assert result.index("[11]") < result.index("[21]") < result.index("[12]")
-    assert "[13]" not in result
+    assert result.index("[11]") < result.index("[21]") < result.index("[12]") < result.index("[13]")
+    params = NEWEST_FIRST | {"limit": 15}
+    assert ("/v1/categories/1/entries", params) in http_client.requests
+    assert ("/v1/categories/2/entries", params) in http_client.requests
 
 
 def test_run_reports_the_total_across_categories():
@@ -244,7 +245,7 @@ def test_run_reports_shown_and_total_counts_for_each_category():
 
     result = tool.run({"category_name": "news", "limit": 3})
 
-    assert result.splitlines()[1] == "Categories: News - IT (2 of 8), News - World (1 of 10)"
+    assert result.splitlines()[1] == "Categories: News - IT (3 of 8), News - World (1 of 10)"
 
 
 def test_run_reports_a_category_with_no_entries():
@@ -264,6 +265,120 @@ def test_run_keeps_the_category_counts_when_no_category_has_entries():
         "No entries found.",
         "Categories: News - IT (0 of 0), News - World (0 of 0)",
     ]
+
+
+def test_run_passes_the_offset_to_each_category():
+    http_client = _categories_client({1: {"entries": []}, 2: {"entries": []}})
+    tool = MinifluxQueryTool(client=http_client)
+
+    tool.run({"category_name": "news", "limit": 15, "offset": 15})
+
+    params = NEWEST_FIRST | {"limit": 15, "offset": 15}
+    assert ("/v1/categories/1/entries", params) in http_client.requests
+    assert ("/v1/categories/2/entries", params) in http_client.requests
+
+
+def test_run_states_the_next_offset_when_a_category_has_more_entries():
+    http_client = _categories_client(
+        {
+            1: {"entries": [_entry(id=11)], "total": 8},
+            2: {"entries": [_entry(id=21)], "total": 1},
+        }
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({"category_name": "news", "limit": 1})
+
+    assert result.splitlines()[-1] == "More entries available: call again with offset=1."
+
+
+def test_run_counts_the_offset_when_stating_the_next_offset():
+    http_client = FakeHttpClient(
+        responses={"/v1/entries": _response({"entries": [_entry()], "total": 30})}
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({"limit": 1, "offset": 15})
+
+    assert result.splitlines()[-1] == "More entries available: call again with offset=16."
+
+
+def test_run_omits_the_next_offset_on_the_last_page():
+    http_client = FakeHttpClient(
+        responses={"/v1/entries": _response({"entries": [_entry()], "total": 16})}
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    assert "offset=" not in tool.run({"limit": 1, "offset": 15})
+
+
+def test_run_reports_cumulative_counts_on_later_pages():
+    http_client = _categories_client(
+        {
+            1: {"entries": [_entry(id=n) for n in range(30, 45)], "total": 41},
+            2: {"entries": [_entry(id=n) for n in range(50, 55)], "total": 20},
+        }
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    lines = tool.run({"category_name": "news", "limit": 15, "offset": 15}).splitlines()
+
+    assert lines[0] == "Showing 50 of 61 entries."
+    assert lines[1] == "Categories: News - IT (30 of 41), News - World (20 of 20)"
+
+
+def test_run_does_not_report_more_than_the_total_past_the_last_page():
+    http_client = _categories_client({1: {"entries": [], "total": 5}, 2: {"entries": []}})
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({"category_name": "news", "offset": 15})
+
+    assert result.splitlines()[1] == "Categories: News - IT (5 of 5), News - World (0 of 0)"
+
+
+def test_run_hides_entries_with_the_same_title_and_keeps_the_first():
+    http_client = FakeHttpClient(
+        responses={
+            "/v1/entries": _response(
+                {
+                    "entries": [
+                        _entry(id=2, title="Same Story"),
+                        _entry(id=3, title="Other Story"),
+                        _entry(id=4, title="  same story "),
+                    ]
+                }
+            )
+        }
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({})
+
+    assert "[2]" in result
+    assert "[4]" not in result
+    assert "Duplicate titles hidden: 1." in result.splitlines()
+
+
+def test_run_hides_the_same_title_across_categories():
+    http_client = _categories_client(
+        {
+            1: {"entries": [_entry(id=11, title="Same Story")]},
+            2: {"entries": [_entry(id=21, title="same story")]},
+        }
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({"category_name": "news"})
+
+    assert "[11]" in result
+    assert "[21]" not in result
+
+
+def test_run_omits_the_duplicate_line_when_titles_are_unique():
+    http_client = FakeHttpClient(responses={"/v1/entries": _response({"entries": [_entry()]})})
+    tool = MinifluxQueryTool(client=http_client)
+
+    assert "Duplicate" not in tool.run({})
 
 
 def test_run_rejects_category_name_together_with_feed_name():

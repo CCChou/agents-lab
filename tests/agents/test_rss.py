@@ -33,6 +33,7 @@ def test_default_system_prompt_triages_by_title_before_reading_text():
     prompt = build_rss_spec().system_prompt
 
     assert "只列標題，不要摘要或讀內文" in prompt
+    assert "預設不讀內文" in prompt
     assert "最多 5 篇" in prompt
     assert "重要度" in prompt
     assert "同一次回覆" in prompt
@@ -42,14 +43,17 @@ def test_default_system_prompt_triages_by_title_before_reading_text():
 def test_default_system_prompt_maps_news_and_tech_to_category_prefixes():
     prompt = build_rss_spec().system_prompt
 
-    assert 'category_name="News"' in prompt
-    assert 'category_name="Tech"' in prompt
+    assert "新聞、news：News\n" in prompt
+    assert "科技、tech：Tech\n" in prompt
+    assert "中東、伊朗、以色列、加薩：News - MiddleEast" in prompt
+    assert "IT 新聞：Tech - IT News" in prompt
+    assert "不要先查 News 或 Tech" in prompt
 
 
 def test_rss_spec_enforces_the_summary_limit_stated_in_the_prompt():
     spec = build_rss_spec()
 
-    assert spec.tool_call_limits == {SummarizeEntryTool.name: MAX_SUMMARIES_PER_TURN}
+    assert spec.tool_call_limits[SummarizeEntryTool.name] == MAX_SUMMARIES_PER_TURN
     assert f"最多 {MAX_SUMMARIES_PER_TURN} 篇" in spec.system_prompt
 
 
@@ -65,7 +69,7 @@ def test_default_system_prompt_marks_evidence_and_stays_within_stated_facts():
 def test_default_system_prompt_defines_the_reply_format():
     prompt = build_rss_spec().system_prompt
 
-    for section in ("## 查詢範圍", "## 議題趨勢", "## 文章摘要", "## 推薦閱讀", "## 其他標題"):
+    for section in ("## 查詢範圍", "## 議題趨勢", "## 文章摘要", "## 推薦閱讀", "## 文章列表"):
         assert section in prompt
 
 
@@ -90,8 +94,36 @@ def test_default_system_prompt_defines_the_remaining_count_and_grouping():
 def test_default_system_prompt_limits_the_entry_list_to_one_query():
     prompt = build_rss_spec().system_prompt
 
-    assert "不要換參數重查" in prompt
-    assert "這次查詢已取得的其餘標題" in prompt
+    assert "同一個範圍只查一次" in prompt
+    assert "才用 offset 查下一頁" in prompt
+    assert "只有列文章或使用者要求時才列標題" in prompt
+    assert "其他標題" not in prompt
+    assert "以最後一次查詢的數字為準" in prompt
+
+
+def test_rss_spec_allows_more_iterations_but_limits_list_queries():
+    spec = build_rss_spec()
+
+    assert spec.max_tool_iterations == 10
+    assert spec.tool_call_limits[MinifluxQueryTool.name] == 5
+
+
+def test_default_system_prompt_requests_fifteen_titles_per_category():
+    assert "limit 用 15" in build_rss_spec().system_prompt
+
+
+def test_default_system_prompt_queries_selected_categories_separately():
+    prompt = build_rss_spec().system_prompt
+
+    assert "用完整名稱分別查詢" in prompt
+    assert "在同一次回覆裡一起呼叫" in prompt
+
+
+def test_default_system_prompt_separates_total_and_shown_counts():
+    prompt = build_rss_spec().system_prompt
+
+    assert "of 前面是顯示數，後面是總數" in prompt
+    assert "分開查詢時要加總" in prompt
 
 
 def test_system_prompt_override_replaces_the_default():

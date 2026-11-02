@@ -2,6 +2,7 @@ import json
 from functools import partial
 
 import httpx
+import pytest
 from langchain_openai import ChatOpenAI
 
 from agent.adapters import openai_compatible
@@ -205,6 +206,67 @@ def test_stream_yields_tool_calls_after_the_final_accumulated_chunk():
     events = list(client.stream([Message.from_text("user", "hi")], tools=[FakeTool()]))
 
     assert events == [ToolCall(id="call_1", name="lookup", arguments={"q": "x"})]
+
+
+class FlakyChatModel(FakeChatModel):
+    def __init__(self, attempts: list[list[FakeChunk | Exception]]) -> None:
+        super().__init__(chunks=[])
+        self._attempts = iter(attempts)
+        self.attempt_count = 0
+
+    def stream(self, messages):
+        self.attempt_count += 1
+        for item in next(self._attempts):
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
+
+def _flaky_client(attempts: list[list[FakeChunk | Exception]]):
+    chat_model = FlakyChatModel(attempts)
+    client = OpenAICompatibleLLMClient(
+        base_url="https://example.test/v1", api_key="key", model="m", chat_model=chat_model
+    )
+    return client, chat_model
+
+
+INVALID_TOOL_CALL = RuntimeError(
+    "Error code: 400 - tool call validation failed: attempted to call tool 'lookpu'"
+)
+
+
+def test_stream_retries_once_when_the_service_rejects_an_invalid_tool_call():
+    client, chat_model = _flaky_client([[INVALID_TOOL_CALL], [FakeChunk("recovered")]])
+
+    assert list(client.stream([Message.from_text("user", "hi")])) == ["recovered"]
+    assert chat_model.attempt_count == 2
+
+
+def test_stream_gives_up_when_the_retry_is_also_rejected():
+    client, chat_model = _flaky_client([[INVALID_TOOL_CALL], [INVALID_TOOL_CALL]])
+
+    with pytest.raises(RuntimeError, match="tool call validation failed"):
+        list(client.stream([Message.from_text("user", "hi")]))
+    assert chat_model.attempt_count == 2
+
+
+def test_stream_does_not_retry_other_errors():
+    client, chat_model = _flaky_client([[RuntimeError("connection lost")]])
+
+    with pytest.raises(RuntimeError, match="connection lost"):
+        list(client.stream([Message.from_text("user", "hi")]))
+    assert chat_model.attempt_count == 1
+
+
+def test_stream_does_not_retry_after_text_was_already_sent():
+    client, chat_model = _flaky_client([[FakeChunk("partial"), INVALID_TOOL_CALL]])
+
+    stream = client.stream([Message.from_text("user", "hi")])
+
+    assert next(stream) == "partial"
+    with pytest.raises(RuntimeError, match="tool call validation failed"):
+        next(stream)
+    assert chat_model.attempt_count == 1
 
 
 def _capture_requests(monkeypatch) -> list[httpx.Request]:
