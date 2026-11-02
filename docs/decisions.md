@@ -199,3 +199,12 @@
 - 原因：多篇全文放進同一個請求會超過模型服務的額度（5 篇約 22,000 token，上限 7,000）。模型不一定遵守 system prompt 的筆數指示，所以上限要由程式強制。工具留在現有對話裡就能用，不需要先做選擇 agent 的機制。
 - 考慮過但沒選：換模型服務或升級方案，要付費；一次只讀 1 篇，多篇摘要的需求做不到；提前做 `DigestAgent`，要先加入選擇機制，留給階段 3 的大量摘要。
 - 重新評估的時機：階段 3 有 token 計算後，改用 token 計算輸入上限。需要固定流程或幾十篇的摘要時，改用 `DigestAgent`。換到額度較高的模型服務時，重新評估是否還需要逐篇摘要。
+
+## D-023：維持 Chat Completions，用 `reasoning_effort` 接上 `gpt-6-luna`
+
+- 日期：2026-11-02
+- 狀態：生效中
+- 決定：繼續使用 Chat Completions，新增選填的 `AGENT_LLM_REASONING_EFFORT`，有設定時才送出。`gpt-6-luna` 要設成 `none`。
+- 原因：`gpt-6-luna` 在 Chat Completions 上，只有 `reasoning_effort` 為 `none` 時才能用 function tools。Responses API 主要是 OpenAI 的介面，其他模型服務可能只有 Chat Completions，維持現狀才能繼續支援 OpenAI 相容服務。這個 agent 主要是查文章和摘要，不一定需要 reasoning，選填設定的改動最小，也不影響其他服務。
+- 考慮過但沒選：改走 Responses API 但不回傳 reasoning item，要改 adapter，卻無法跨工具呼叫延續 reasoning；改走 Responses API 並回傳 reasoning item，要在 `Message` 和 `LLMClient` 加入供應商專屬的狀態。
+- 重新評估的時機：工具選擇或摘要品質因為沒有 reasoning 而明顯不足時，直接評估回傳 reasoning item 的做法，並要維持無狀態，不用 `previous_response_id`，避免繞過 D-016 和 D-020。

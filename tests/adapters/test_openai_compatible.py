@@ -1,3 +1,10 @@
+import json
+from functools import partial
+
+import httpx
+from langchain_openai import ChatOpenAI
+
+from agent.adapters import openai_compatible
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
 from agent.domain.interfaces import LLMClient
 from agent.domain.message import Message
@@ -198,3 +205,56 @@ def test_stream_yields_tool_calls_after_the_final_accumulated_chunk():
     events = list(client.stream([Message.from_text("user", "hi")], tools=[FakeTool()]))
 
     assert events == [ToolCall(id="call_1", name="lookup", arguments={"q": "x"})]
+
+
+def _capture_requests(monkeypatch) -> list[httpx.Request]:
+    requests: list[httpx.Request] = []
+    chunk = {
+        "id": "chatcmpl-1",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "test-model",
+        "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
+        )
+
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        openai_compatible, "ChatOpenAI", partial(ChatOpenAI, http_client=http_client)
+    )
+    return requests
+
+
+def test_stream_sends_configured_reasoning_effort_to_chat_completions(monkeypatch):
+    requests = _capture_requests(monkeypatch)
+    client = OpenAICompatibleLLMClient(
+        base_url="https://example.test/v1",
+        api_key="key",
+        model="gpt-6-luna",
+        reasoning_effort="none",
+    )
+
+    list(client.stream([Message.from_text("user", "hi")], tools=[FakeTool()]))
+
+    assert requests[0].url.path == "/v1/chat/completions"
+    assert json.loads(requests[0].content)["reasoning_effort"] == "none"
+
+
+def test_stream_omits_reasoning_effort_when_not_configured(monkeypatch):
+    requests = _capture_requests(monkeypatch)
+    client = OpenAICompatibleLLMClient(
+        base_url="https://example.test/v1",
+        api_key="key",
+        model="test-model",
+    )
+
+    list(client.stream([Message.from_text("user", "hi")]))
+
+    assert "reasoning_effort" not in json.loads(requests[0].content)

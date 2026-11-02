@@ -67,6 +67,7 @@ def main() -> None:
         base_url=config.base_url,
         api_key=config.api_key,
         model=spec.model or config.model,
+        reasoning_effort=config.reasoning_effort,
     )
     tools = _build_tools(llm_client)
     store = InMemoryConversationStore()

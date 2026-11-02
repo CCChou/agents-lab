@@ -46,6 +46,28 @@ def test_from_env_defaults_system_prompt_to_none_when_unset(monkeypatch):
     assert config.system_prompt is None
 
 
+def test_from_env_reads_optional_reasoning_effort(monkeypatch):
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "gpt-6-luna")
+    monkeypatch.setenv("AGENT_LLM_REASONING_EFFORT", "none")
+
+    config = LLMConfig.from_env()
+
+    assert config.reasoning_effort == "none"
+
+
+def test_from_env_defaults_reasoning_effort_to_none_when_unset(monkeypatch):
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "deepseek/deepseek-chat-v3.1:free")
+    monkeypatch.delenv("AGENT_LLM_REASONING_EFFORT", raising=False)
+
+    config = LLMConfig.from_env()
+
+    assert config.reasoning_effort is None
+
+
 def test_miniflux_config_from_env_reads_both_values(monkeypatch):
     monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
     monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
