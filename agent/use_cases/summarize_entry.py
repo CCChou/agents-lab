@@ -16,8 +16,9 @@ class SummarizeEntryTool:
     name = "summarize_entry"
     description = (
         "Summarize one article by the id shown in miniflux_query_entries results. Reads the "
-        "full text when needed and returns only a short summary, so use this instead of "
-        "reading the text when covering several articles."
+        "full text when needed and returns only a short summary. Each call makes one separate "
+        "LLM request, so call this only for articles you have chosen, not for every article "
+        "in a list."
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",

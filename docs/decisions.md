@@ -208,3 +208,21 @@
 - 原因：`gpt-6-luna` 在 Chat Completions 上，只有 `reasoning_effort` 為 `none` 時才能用 function tools。Responses API 主要是 OpenAI 的介面，其他模型服務可能只有 Chat Completions，維持現狀才能繼續支援 OpenAI 相容服務。這個 agent 主要是查文章和摘要，不一定需要 reasoning，選填設定的改動最小，也不影響其他服務。
 - 考慮過但沒選：改走 Responses API 但不回傳 reasoning item，要改 adapter，卻無法跨工具呼叫延續 reasoning；改走 Responses API 並回傳 reasoning item，要在 `Message` 和 `LLMClient` 加入供應商專屬的狀態。
 - 重新評估的時機：工具選擇或摘要品質因為沒有 reasoning 而明顯不足時，直接評估回傳 reasoning item 的做法，並要維持無狀態，不用 `previous_response_id`，避免繞過 D-016 和 D-020。
+
+## D-024：依 category 開頭查詢，先看標題再決定是否讀內文
+
+- 日期：2026-11-02
+- 狀態：生效中，筆數上限和趨勢的做法已被 D-025 取代
+- 決定：`miniflux_query_entries` 新增 `category_name`，不分大小寫比對 category 名稱的開頭，不能和 `feed_name` 同時使用。比對到多個 category 時分別查詢，再輪流合併，總數上限維持 20 篇（見 D-022）。查詢結果顯示 category 和符合條件的總篇數。新增 `miniflux_list_categories` 工具。`rss` 的 system prompt 要求列文章時只列標題；摘要多篇時先依標題挑選，一次最多 5 篇，並在同一次回覆裡一起呼叫 `summarize_entry`。使用者提到主題或類別時，先確認有沒有對應的 category，有就用 `category_name`，沒有才用 `search`。工具說明只寫共用的用法和成本；「新聞」、「科技」對應的 category 前綴、筆數上限和回覆流程寫在 `rss` 的 system prompt。
+- 原因：使用者的 category 以 `News`、`Tech` 分組，要能一次查整組。比對「包含」時，`it` 也會比對到 `Tech - Architecture`。單純依時間合併時，發文頻率高或剛更新的 category 會佔滿名額：實測今天 112 篇未讀新聞的前 5 篇有 4 篇來自 `News - IT`，前 20 篇完全沒有 `News - World`。查詢結果本來就不含內文，先看標題可以用很少的 token 過濾不需要的文章。總篇數讓模型能回報還有幾篇沒處理。實測時只靠工具的 `description`，模型問「AI 的文章」會直接用 `search`，混進不相關的文章，所以這裡不沿用 D-018 先不改 system prompt 的做法。
+- 考慮過但沒選：依發布時間合併，類別分布太偏；沿用 `feed_name` 的「包含」比對，容易誤中；Miniflux 的 `category_id` 參數，一次只能指定一個 category；不改 system prompt，模型沒有先挑選的指示。
+- 重新評估的時機：只看標題常漏掉好文章時。要涵蓋整個 category 而不是挑 5 篇時，改用 `DigestAgent`（階段 3），重用 `category_name` 的比對邏輯。工具結果的標題仍未標記為不可信內容，出現有副作用的工具前要處理（見 D-021）。
+
+## D-025：由程式強制單一工具的每輪上限，回覆標示來源和查證程度
+
+- 日期：2026-11-02
+- 狀態：生效中
+- 決定：`AgentSpec` 新增 `tool_call_limits`，以工具名稱設定一輪對話的呼叫上限，由 `LoopAgent` 計數。超過時不執行、不輸出 `ToolStarted`，改回傳未執行的工具結果。`rss` 設定 `summarize_entry` 一輪最多 5 次，prompt 使用同一個常數。使用 `category_name` 時，查詢結果列出每個 category 的顯示數和總數，沒有文章也會列出。模型依重要度從標題挑選要讀的文章，趨勢的每一列標示「已讀內容」或「僅標題」，回覆使用固定區塊。
+- 原因：只寫在 prompt 的 5 篇上限沒有被遵守，實測模型嘗試摘要 20 篇，14 篇成功，至少 4 篇撞到工具上限。`max_tool_iterations` 計算 LLM 回合，擋不住同一次回覆裡的多個呼叫。上限放在 `LoopAgent`，新工具不用各自計數，工具本身也不用知道一輪對話的範圍。只看標題容易補上標題沒有的細節，也可能把少量樣本當成趨勢，所以要標示依據並保留有限的查證。來源數量由工具回報，使用者才能判斷有沒有漏。
+- 考慮過但沒選：只靠 prompt，已實測無法保證；在 `SummarizeEntryTool` 裡計數，工具不知道一輪對話的邊界；趨勢完全只看標題，容易產生幻覺；來源由模型自己整理，漏掉時看不出來。
+- 重新評估的時機：階段 3 的 `DigestAgent` 能涵蓋整個 category 時，重新評估這條路徑是否還要做趨勢。階段 4 有 eval 後，用資料確認查證標示和幻覺比例。回覆格式造成 token 或閱讀負擔時再精簡。

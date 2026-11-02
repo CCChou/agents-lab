@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -8,3 +8,4 @@ class AgentSpec:
     model: str | None = None
     tools: tuple[str, ...] = ()
     max_tool_iterations: int = 5
+    tool_call_limits: dict[str, int] = field(default_factory=dict)

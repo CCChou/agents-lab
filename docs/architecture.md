@@ -42,6 +42,7 @@
 │  InMemoryConversationStore    MinifluxGetEntryTool    │
 │  CurrentTimeTool              FetchPageTool           │
 │  MinifluxArticleReader        SqliteStores*           │
+│  MinifluxListCategoriesTool                           │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -51,7 +52,7 @@
 | --- | --- | --- | --- |
 | `Agent` | domain 介面 | 所有 agent 的共同入口：收請求、出事件 | 已實作 |
 | `LoopAgent` | use_cases | 通用工具迴圈，由 LLM 決定流程 | 已實作 |
-| `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具、工具上限 | 已實作，定義放在 `agent/agents/` |
+| `AgentSpec` | domain 資料 | 定義對話型 agent：指令、模型、工具、迴圈上限、單一工具的每輪上限 | 已實作，定義放在 `agent/agents/` |
 | `AgentRequest` | domain 資料 | 統一的輸入格式：session 和使用者訊息 | 已實作 |
 | `Event` | domain 資料 | 統一的輸出格式 | 已實作：`TextDelta`、`ToolStarted`、`ToolLimitReached` |
 | `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 已實作，目前組合指令和對話，並清除舊的工具結果 |
@@ -83,7 +84,7 @@
 1. `cli.run` 讀取輸入，呼叫 `Agent.run()`。
 2. `LoopAgent` 透過 `ContextBuilder` 取得 system prompt 和歷史，加上新訊息，連同 `AgentSpec` 列出的工具送給 `LLMClient.stream()`。
 3. LLM 的文字以 `TextDelta` 即時輸出。沒有工具呼叫時，結束這一輪。
-4. LLM 要求呼叫工具時，`LoopAgent` 輸出 `ToolStarted` 並執行工具，把結果加入這一輪的訊息，再回到第 2 步。
+4. LLM 要求呼叫工具時，`LoopAgent` 輸出 `ToolStarted` 並執行工具，把結果加入這一輪的訊息，再回到第 2 步。超過 `AgentSpec.tool_call_limits` 的呼叫不執行，改回傳未執行的結果（見 D-025）。
 5. 第 2 到 4 步最多執行 `AgentSpec.max_tool_iterations` 次（預設 5）。達到上限時，補上工具結果，再以不提供工具的方式要求 LLM 回答一次。
 
 工具執行失敗或工具不存在時，錯誤訊息會回傳給 LLM，不會中斷對話。這一輪完成後，才把訊息寫入 `ConversationStore`。LLM 呼叫失敗時，這一輪不會保存，`cli.run` 顯示錯誤並繼續對話。

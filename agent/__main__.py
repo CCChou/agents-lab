@@ -12,6 +12,7 @@ from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.adapters.miniflux import (
     MinifluxArticleReader,
     MinifluxGetEntryTool,
+    MinifluxListCategoriesTool,
     MinifluxQueryTool,
 )
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
@@ -50,6 +51,7 @@ def _build_tools(llm_client: LLMClient) -> list[Tool]:
     reader = MinifluxArticleReader(client=client, read_page=fetch_page.read_text)
     return [
         MinifluxQueryTool(client=client),
+        MinifluxListCategoriesTool(client=client),
         MinifluxGetEntryTool(client=client),
         fetch_page,
         SummarizeEntryTool(reader=reader, llm_client=llm_client),

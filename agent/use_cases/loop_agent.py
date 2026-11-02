@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Generator, Iterator
 
 from agent.domain.agent_spec import AgentSpec
@@ -10,6 +11,9 @@ from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.tool_registry import ToolRegistry
 
 TOOL_LIMIT_RESULT = "未執行：已達到工具呼叫上限。請根據目前資訊回答，並說明缺少哪些內容。"
+TOOL_CALL_LIMIT_RESULT = (
+    "未執行：{name} 這一輪已達到 {limit} 次上限。不要再呼叫這個工具，請根據目前資訊回答。"
+)
 
 
 class LoopAgent:
@@ -37,6 +41,7 @@ class LoopAgent:
     def _run_turn(self, messages: list[Message]) -> Iterator[Event]:
         iterations = 0
         tools = list(self._tools.values()) or None
+        call_counts: Counter[str] = Counter()
         while True:
             iterations += 1
             _, tool_calls = yield from self._ask_llm(messages, tools)
@@ -49,6 +54,12 @@ class LoopAgent:
                 return
 
             for call in tool_calls:
+                limit = self._spec.tool_call_limits.get(call.name)
+                if limit is not None and call_counts[call.name] >= limit:
+                    result = TOOL_CALL_LIMIT_RESULT.format(name=call.name, limit=limit)
+                    messages.append(Message.from_text("tool", result, tool_call_id=call.id))
+                    continue
+                call_counts[call.name] += 1
                 yield ToolStarted(name=call.name, arguments=call.arguments)
                 messages.append(
                     Message.from_text("tool", self._run_tool(call), tool_call_id=call.id)

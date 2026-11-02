@@ -22,6 +22,7 @@ def make_agent(
     system_prompt: str | None = None,
     tools: list[Tool] | None = None,
     max_tool_iterations: int = 5,
+    tool_call_limits: dict[str, int] | None = None,
 ) -> LoopAgent:
     store = store or InMemoryConversationStore()
     tools = tools or []
@@ -30,6 +31,7 @@ def make_agent(
         system_prompt=system_prompt,
         tools=tuple(tool.name for tool in tools),
         max_tool_iterations=max_tool_iterations,
+        tool_call_limits=tool_call_limits or {},
     )
     return LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
 
@@ -62,9 +64,11 @@ class FakeTool:
         self.parameters_schema: dict[str, Any] = {"type": "object", "properties": {}}
         self._result = result
         self.received_arguments: dict[str, Any] | None = None
+        self.run_count = 0
 
     def run(self, arguments: dict[str, Any]) -> str:
         self.received_arguments = arguments
+        self.run_count += 1
         if isinstance(self._result, Exception):
             raise self._result
         return self._result
@@ -263,6 +267,57 @@ def test_tool_call_at_the_limit_gets_a_result_without_being_executed():
     assert tool_result.role == "tool"
     assert tool_result.tool_call_id == "call_1"
     assert "上限" in tool_result.text
+
+
+def _call(call_id: str, name: str = "lookup") -> ToolCall:
+    return ToolCall(id=call_id, name=name, arguments={})
+
+
+def test_tool_call_limit_stops_extra_calls_in_the_same_reply():
+    llm_client = FakeLLMClient(replies=[[_call("c1"), _call("c2"), _call("c3")], ["answer"]])
+    tool = FakeTool(name="lookup")
+    agent = make_agent(llm_client, tools=[tool], tool_call_limits={"lookup": 2})
+
+    events = list(agent.run(request("do something")))
+
+    assert tool.run_count == 2
+    assert sum(isinstance(event, ToolStarted) for event in events) == 2
+    results = [m for m in llm_client.received_messages_per_call[1] if m.role == "tool"]
+    assert [m.tool_call_id for m in results] == ["c1", "c2", "c3"]
+    assert "未執行" in results[2].text
+    assert "上限" in results[2].text
+
+
+def test_tool_call_limit_counts_across_iterations_of_one_turn():
+    llm_client = FakeLLMClient(replies=[[_call("c1")], [_call("c2")], [_call("c3")], ["answer"]])
+    tool = FakeTool(name="lookup")
+    agent = make_agent(llm_client, tools=[tool], tool_call_limits={"lookup": 2})
+
+    list(agent.run(request("do something")))
+
+    assert tool.run_count == 2
+
+
+def test_tool_call_limit_resets_for_the_next_user_message():
+    llm_client = FakeLLMClient(replies=[[_call("c1")], ["a"], [_call("c2")], ["b"]])
+    tool = FakeTool(name="lookup")
+    agent = make_agent(llm_client, tools=[tool], tool_call_limits={"lookup": 1})
+
+    list(agent.run(request("first")))
+    list(agent.run(request("second")))
+
+    assert tool.run_count == 2
+
+
+def test_tool_call_limit_applies_only_to_the_named_tool():
+    llm_client = FakeLLMClient(replies=[[_call("c1", "other"), _call("c2", "other")], ["answer"]])
+    limited = FakeTool(name="lookup")
+    other = FakeTool(name="other")
+    agent = make_agent(llm_client, tools=[limited, other], tool_call_limits={"lookup": 1})
+
+    list(agent.run(request("do something")))
+
+    assert other.run_count == 2
 
 
 def test_every_tool_call_has_a_result_in_the_next_turn_after_reaching_the_limit():

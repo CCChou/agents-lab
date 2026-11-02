@@ -7,6 +7,7 @@ from agent.adapters.miniflux import (
     MIN_STORED_CHARS,
     MinifluxArticleReader,
     MinifluxGetEntryTool,
+    MinifluxListCategoriesTool,
     MinifluxQueryTool,
 )
 from agent.domain.interfaces import ArticleReader
@@ -26,11 +27,17 @@ class FakeHttpClient:
 
 
 def _response(json_data, status_code: int = 200) -> httpx.Response:
+    if isinstance(json_data, dict) and "entries" in json_data:
+        json_data = {"total": len(json_data["entries"]), **json_data}
     return httpx.Response(status_code, json=json_data, request=httpx.Request("GET", "http://test"))
 
 
 def _entry(
-    id: int = 1, title: str = "Some Article", feed_title: str = "Some Feed", status: str = "unread"
+    id: int = 1,
+    title: str = "Some Article",
+    feed_title: str = "Some Feed",
+    status: str = "unread",
+    category: str = "Some Category",
 ) -> dict:
     return {
         "id": id,
@@ -39,7 +46,7 @@ def _entry(
         "status": status,
         "published_at": "2026-11-01T14:00:00Z",
         "content": "<p>Article body</p>",
-        "feed": {"id": 1, "title": feed_title},
+        "feed": {"id": 1, "title": feed_title, "category": {"id": 1, "title": category}},
     }
 
 
@@ -145,6 +152,157 @@ def test_run_formats_entries_as_readable_text():
     assert "Great Article" in result
     assert "Cool Feed" in result
     assert "https://example.test/42" in result
+
+
+def _categories_client(entries_by_category: dict[int, dict]) -> FakeHttpClient:
+    return FakeHttpClient(
+        responses={
+            "/v1/categories": _response(
+                [
+                    {"id": 1, "title": "News - IT"},
+                    {"id": 2, "title": "News - World"},
+                    {"id": 3, "title": "Tech - Architecture"},
+                ]
+            ),
+            **{
+                f"/v1/categories/{category_id}/entries": _response(page)
+                for category_id, page in entries_by_category.items()
+            },
+        }
+    )
+
+
+def test_run_queries_every_category_starting_with_the_name_case_insensitively():
+    http_client = _categories_client({1: {"entries": []}, 2: {"entries": []}})
+    tool = MinifluxQueryTool(client=http_client)
+
+    tool.run({"category_name": "news", "status": "unread"})
+
+    params = NEWEST_FIRST | {"limit": 10, "status": "unread"}
+    assert ("/v1/categories/1/entries", params) in http_client.requests
+    assert ("/v1/categories/2/entries", params) in http_client.requests
+    assert not any(path == "/v1/categories/3/entries" for path, _ in http_client.requests)
+
+
+def test_run_matches_the_start_of_the_category_name_rather_than_any_part():
+    http_client = FakeHttpClient(
+        responses={"/v1/categories": _response([{"id": 3, "title": "Tech - Architecture"}])}
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    with pytest.raises(ValueError, match="miniflux_list_categories"):
+        tool.run({"category_name": "it"})
+
+
+def test_run_takes_turns_between_categories_and_keeps_the_limit():
+    http_client = _categories_client(
+        {
+            1: {"entries": [_entry(id=11), _entry(id=12), _entry(id=13)]},
+            2: {"entries": [_entry(id=21)]},
+        }
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({"category_name": "news", "limit": 3})
+
+    assert "[11]" in result and "[21]" in result and "[12]" in result
+    assert result.index("[11]") < result.index("[21]") < result.index("[12]")
+    assert "[13]" not in result
+
+
+def test_run_reports_the_total_across_categories():
+    http_client = _categories_client(
+        {
+            1: {"entries": [_entry(id=11)], "total": 8},
+            2: {"entries": [_entry(id=21)], "total": 10},
+        }
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({"category_name": "news"})
+
+    assert result.splitlines()[0] == "Showing 2 of 18 entries."
+
+
+def test_run_reports_the_total_for_a_plain_query():
+    http_client = FakeHttpClient(
+        responses={"/v1/entries": _response({"entries": [_entry()], "total": 112})}
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    assert tool.run({}).splitlines()[0] == "Showing 1 of 112 entries."
+
+
+def test_run_reports_shown_and_total_counts_for_each_category():
+    http_client = _categories_client(
+        {
+            1: {"entries": [_entry(id=11), _entry(id=12), _entry(id=13)], "total": 8},
+            2: {"entries": [_entry(id=21)], "total": 10},
+        }
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    result = tool.run({"category_name": "news", "limit": 3})
+
+    assert result.splitlines()[1] == "Categories: News - IT (2 of 8), News - World (1 of 10)"
+
+
+def test_run_reports_a_category_with_no_entries():
+    http_client = _categories_client(
+        {1: {"entries": [_entry(id=11)], "total": 8}, 2: {"entries": [], "total": 0}}
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    assert "News - World (0 of 0)" in tool.run({"category_name": "news"})
+
+
+def test_run_keeps_the_category_counts_when_no_category_has_entries():
+    http_client = _categories_client({1: {"entries": []}, 2: {"entries": []}})
+    tool = MinifluxQueryTool(client=http_client)
+
+    assert tool.run({"category_name": "news"}).splitlines() == [
+        "No entries found.",
+        "Categories: News - IT (0 of 0), News - World (0 of 0)",
+    ]
+
+
+def test_run_rejects_category_name_together_with_feed_name():
+    tool = MinifluxQueryTool(client=FakeHttpClient(responses={}))
+
+    with pytest.raises(ValueError, match="either"):
+        tool.run({"category_name": "news", "feed_name": "hacker"})
+
+
+def test_run_shows_the_category_of_each_entry():
+    http_client = FakeHttpClient(
+        responses={"/v1/entries": _response({"entries": [_entry(category="News - IT")]})}
+    )
+    tool = MinifluxQueryTool(client=http_client)
+
+    assert "News - IT" in tool.run({})
+
+
+def test_list_categories_satisfies_tool_port():
+    assert isinstance(MinifluxListCategoriesTool(client=FakeHttpClient(responses={})), Tool)
+
+
+def test_list_categories_shows_names_and_unread_counts():
+    http_client = FakeHttpClient(
+        responses={
+            "/v1/categories": _response(
+                [
+                    {"id": 3, "title": "News - IT", "total_unread": 730},
+                    {"id": 13, "title": "Tech - AI", "total_unread": 1048},
+                ]
+            )
+        }
+    )
+    tool = MinifluxListCategoriesTool(client=http_client)
+
+    result = tool.run({})
+
+    assert http_client.requests == [("/v1/categories", {"counts": "true"})]
+    assert result == "- News - IT (730 unread)\n- Tech - AI (1048 unread)"
 
 
 def test_run_shows_the_published_time_in_the_given_timezone():
