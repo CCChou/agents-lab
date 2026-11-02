@@ -77,6 +77,22 @@ def test_default_system_prompt_separates_article_metadata_from_the_summary():
     assert "來源｜category｜發布時間\n\n摘要內容" in build_rss_spec().system_prompt
 
 
+def test_default_system_prompt_builds_trends_from_all_titles_before_verifying():
+    prompt = build_rss_spec().system_prompt
+
+    assert "先從所有標題依出現次數和影響範圍歸納議題" in prompt
+    assert "沒有摘要的議題也要列出" in prompt
+    assert "不要把一篇文章當成一個議題" in prompt
+    assert "摘要只用來查證最重要的議題" in prompt
+
+
+def test_default_system_prompt_keeps_the_importance_column_short():
+    prompt = build_rss_spec().system_prompt
+
+    assert "重要度欄只寫高、中高、中、低" in prompt
+    assert "簡要判讀" in prompt
+
+
 def test_default_system_prompt_prefers_categories_for_topics():
     prompt = build_rss_spec().system_prompt
 
