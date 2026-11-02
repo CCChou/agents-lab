@@ -69,6 +69,10 @@ def test_default_system_prompt_defines_the_reply_format():
         assert section in prompt
 
 
+def test_default_system_prompt_separates_article_metadata_from_the_summary():
+    assert "來源｜category｜發布時間\n\n摘要內容" in build_rss_spec().system_prompt
+
+
 def test_default_system_prompt_prefers_categories_for_topics():
     prompt = build_rss_spec().system_prompt
 

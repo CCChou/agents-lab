@@ -5,8 +5,10 @@ from collections.abc import Iterator
 from datetime import datetime
 
 import httpx
+from prompt_toolkit import PromptSession
+from rich.console import Console
 
-from agent.adapters.cli import run
+from agent.adapters.cli import MarkdownBlockWriter, prompt_lines, run
 from agent.adapters.current_time import CurrentTimeTool
 from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.adapters.miniflux import (
@@ -25,11 +27,6 @@ from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
 from agent.use_cases.summarize_entry import SummarizeEntryTool
 from agent.use_cases.tool_registry import ToolRegistry
-
-try:
-    import readline  # noqa: F401 - importing enables input() history/line-editing
-except ImportError:
-    pass
 
 
 def _stdin_lines() -> Iterator[str]:
@@ -74,7 +71,11 @@ def main() -> None:
     tools = _build_tools(llm_client)
     store = InMemoryConversationStore()
     agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
-    run(agent, _stdin_lines(), sys.stdout)
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        lines = prompt_lines(PromptSession().prompt)
+        run(agent, lines, sys.stdout, prompt="", text_writer=MarkdownBlockWriter(Console()))
+    else:
+        run(agent, _stdin_lines(), sys.stdout)
 
 
 if __name__ == "__main__":

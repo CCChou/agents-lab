@@ -81,7 +81,7 @@
 
 ## 現行訊息流程（`LoopAgent`）
 
-1. `cli.run` 讀取輸入，呼叫 `Agent.run()`。
+1. `cli.run` 讀取輸入，呼叫 `Agent.run()`。輸入來源和文字輸出方式由組裝層決定（見 D-026）。
 2. `LoopAgent` 透過 `ContextBuilder` 取得 system prompt 和歷史，加上新訊息，連同 `AgentSpec` 列出的工具送給 `LLMClient.stream()`。
 3. LLM 的文字以 `TextDelta` 即時輸出。沒有工具呼叫時，結束這一輪。
 4. LLM 要求呼叫工具時，`LoopAgent` 輸出 `ToolStarted` 並執行工具，把結果加入這一輪的訊息，再回到第 2 步。超過 `AgentSpec.tool_call_limits` 的呼叫不執行，改回傳未執行的結果（見 D-025）。
