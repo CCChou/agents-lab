@@ -9,15 +9,18 @@ class LLMConfig:
     model: str
     system_prompt: str | None = None
     reasoning_effort: str | None = None
+    temperature: float | None = None
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
+        temperature = os.environ.get("AGENT_LLM_TEMPERATURE")
         return cls(
             base_url=os.environ["AGENT_LLM_BASE_URL"],
             api_key=os.environ["AGENT_LLM_API_KEY"],
             model=os.environ["AGENT_LLM_MODEL"],
             system_prompt=os.environ.get("AGENT_SYSTEM_PROMPT"),
             reasoning_effort=os.environ.get("AGENT_LLM_REASONING_EFFORT"),
+            temperature=float(temperature) if temperature else None,
         )
 
 

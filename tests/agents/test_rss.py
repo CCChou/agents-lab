@@ -2,6 +2,7 @@ from datetime import datetime
 
 from agent.adapters.current_time import CurrentTimeTool
 from agent.adapters.miniflux import (
+    MinifluxCountEntriesByCategoryTool,
     MinifluxGetEntryTool,
     MinifluxListCategoriesTool,
     MinifluxQueryTool,
@@ -16,6 +17,7 @@ def test_rss_spec_can_resolve_its_tools():
     tools = [
         MinifluxQueryTool(client=None),
         MinifluxListCategoriesTool(client=None),
+        MinifluxCountEntriesByCategoryTool(client=None),
         MinifluxGetEntryTool(client=None),
         FetchPageTool(client=None),
         SummarizeEntryTool(reader=None, llm_client=None),
@@ -93,6 +95,18 @@ def test_default_system_prompt_keeps_the_importance_column_short():
     assert "簡要判讀" in prompt
 
 
+def test_default_system_prompt_fixes_the_verification_labels():
+    assert "查證欄只能寫已讀內容、部分已讀或僅標題" in build_rss_spec().system_prompt
+
+
+def test_default_system_prompt_finishes_querying_before_summarizing():
+    assert "查詢完成後才能呼叫 summarize_entry" in build_rss_spec().system_prompt
+
+
+def test_default_system_prompt_avoids_bold_text():
+    assert "回覆不要使用粗體" in build_rss_spec().system_prompt
+
+
 def test_default_system_prompt_prefers_categories_for_topics():
     prompt = build_rss_spec().system_prompt
 
@@ -107,13 +121,12 @@ def test_default_system_prompt_defines_the_remaining_count_and_grouping():
     assert "以查詢結果標示的 category 為準" in prompt
 
 
-def test_default_system_prompt_limits_the_entry_list_to_one_query():
+def test_default_system_prompt_stops_querying_after_the_plan():
     prompt = build_rss_spec().system_prompt
 
-    assert "同一個範圍只查一次" in prompt
-    assert "才用 offset 查下一頁" in prompt
+    assert "計畫內的查詢完成後就不要再查，查詢結果提示還有文章時也一樣" in prompt
+    assert "使用者之後要求看更多時，重新規劃，用 offset 接續" in prompt
     assert "只有列文章或使用者要求時才列標題" in prompt
-    assert "其他標題" not in prompt
     assert "以最後一次查詢的數字為準" in prompt
 
 
@@ -124,15 +137,31 @@ def test_rss_spec_allows_more_iterations_but_limits_list_queries():
     assert spec.tool_call_limits[MinifluxQueryTool.name] == 5
 
 
-def test_default_system_prompt_requests_fifteen_titles_per_category():
-    assert "limit 用 15" in build_rss_spec().system_prompt
-
-
-def test_default_system_prompt_queries_selected_categories_separately():
+def test_default_system_prompt_probes_the_totals_before_planning():
     prompt = build_rss_spec().system_prompt
 
-    assert "用完整名稱分別查詢" in prompt
-    assert "在同一次回覆裡一起呼叫" in prompt
+    assert "用 miniflux_count_entries_by_category 傳入這次要查的 category" in prompt
+    assert "用 search 或 feed_name 時略過探查" in prompt
+    assert prompt.index("1. 探查") < prompt.index("2. 規劃") < prompt.index("3. 查詢")
+
+
+def test_default_system_prompt_plans_the_title_budget_before_querying():
+    prompt = build_rss_spec().system_prompt
+
+    assert "依總數和相關度，用一行寫出每個 category 的篇數和總數" in prompt
+    assert "每個 category 的篇數不超過它的總數" in prompt
+    assert "所有查詢顯示的標題加起來最多 60 篇" in prompt
+    assert "這是總量，不是每次查詢或每個 category 的篇數" in prompt
+    assert "查詢最多 5 次" in prompt
+    assert "越相關的 category 分配越多" in prompt
+    assert "15" not in prompt
+
+
+def test_default_system_prompt_runs_all_planned_queries_together():
+    prompt = build_rss_spec().system_prompt
+
+    assert "依計畫從 offset 0 開始，決定每次呼叫的 category_name、limit 和 offset" in prompt
+    assert "在同一次回覆裡全部呼叫" in prompt
 
 
 def test_default_system_prompt_separates_total_and_shown_counts():

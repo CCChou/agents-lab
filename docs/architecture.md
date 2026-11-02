@@ -43,6 +43,7 @@
 │  CurrentTimeTool              FetchPageTool           │
 │  MinifluxArticleReader        SqliteStores*           │
 │  MinifluxListCategoriesTool                           │
+│  MinifluxCountEntriesByCategoryTool                   │
 └───────────────────────────────────────────────────────┘
 ```
 

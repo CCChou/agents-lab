@@ -46,12 +46,14 @@ class OpenAICompatibleLLMClient:
         model: str,
         chat_model: BaseChatModel | None = None,
         reasoning_effort: str | None = None,
+        temperature: float | None = None,
     ) -> None:
         self._chat_model = chat_model or ChatOpenAI(
             base_url=base_url,
             api_key=api_key,
             model=model,
             reasoning_effort=reasoning_effort,
+            temperature=temperature,
         )
 
     def stream(

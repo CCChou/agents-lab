@@ -6,6 +6,7 @@ import pytest
 from agent.adapters.miniflux import (
     MIN_STORED_CHARS,
     MinifluxArticleReader,
+    MinifluxCountEntriesByCategoryTool,
     MinifluxGetEntryTool,
     MinifluxListCategoriesTool,
     MinifluxQueryTool,
@@ -61,6 +62,13 @@ def test_date_range_descriptions_explain_the_expected_offset():
 
     assert "get_current_time" in properties["published_after"]["description"]
     assert "get_current_time" in properties["published_before"]["description"]
+
+
+def test_limit_description_explains_the_hard_cap_and_paging():
+    description = MinifluxQueryTool.parameters_schema["properties"]["limit"]["description"]
+
+    assert "Larger values are reduced to 15" in description
+    assert "use offset to read more" in description
 
 
 def test_run_queries_entries_with_default_limit():
@@ -418,6 +426,107 @@ def test_list_categories_shows_names_and_unread_counts():
 
     assert http_client.requests == [("/v1/categories", {"counts": "true"})]
     assert result == "- News - IT (730 unread)\n- Tech - AI (1048 unread)"
+
+
+def test_list_categories_points_to_the_count_tool_for_date_ranges():
+    assert MinifluxCountEntriesByCategoryTool.name in MinifluxListCategoriesTool.description
+
+
+def _counting_client() -> FakeHttpClient:
+    return FakeHttpClient(
+        responses={
+            "/v1/categories": _response(
+                [
+                    {"id": 1, "title": "News - MiddleEast"},
+                    {"id": 2, "title": "News - World"},
+                    {"id": 3, "title": "Tech - AI"},
+                ]
+            ),
+            "/v1/categories/1/entries": _response({"total": 58, "entries": [_entry()]}),
+            "/v1/categories/2/entries": _response({"total": 24, "entries": [_entry()]}),
+            "/v1/categories/3/entries": _response({"total": 7, "entries": [_entry()]}),
+        }
+    )
+
+
+def test_count_entries_by_category_satisfies_the_tool_protocol():
+    tool = MinifluxCountEntriesByCategoryTool(client=FakeHttpClient(responses={}))
+
+    assert isinstance(tool, Tool)
+
+
+def test_count_entries_by_category_requires_category_names():
+    schema = MinifluxCountEntriesByCategoryTool.parameters_schema
+
+    assert schema["required"] == ["category_names"]
+    assert schema["properties"]["category_names"]["type"] == "array"
+
+
+def test_count_entries_by_category_reports_only_the_given_categories():
+    http_client = _counting_client()
+    tool = MinifluxCountEntriesByCategoryTool(client=http_client)
+
+    result = tool.run({"category_names": ["News - MiddleEast", "Tech - AI"]})
+
+    assert result == "- News - MiddleEast: 58 entries\n- Tech - AI: 7 entries\nTotal: 65 entries"
+    assert [path for path, _ in http_client.requests] == [
+        "/v1/categories",
+        "/v1/categories/1/entries",
+        "/v1/categories/3/entries",
+    ]
+
+
+def test_count_entries_by_category_requests_one_entry_within_the_date_range():
+    http_client = _counting_client()
+    tool = MinifluxCountEntriesByCategoryTool(client=http_client)
+
+    tool.run(
+        {
+            "category_names": ["Tech - AI"],
+            "published_after": "2026-11-02T00:00:00+08:00",
+            "published_before": "2026-11-03T00:00:00+08:00",
+        }
+    )
+
+    assert http_client.requests[-1][1] == {
+        "limit": 1,
+        "published_after": int(datetime(2026, 11, 1, 16, tzinfo=UTC).timestamp()),
+        "published_before": int(datetime(2026, 11, 2, 16, tzinfo=UTC).timestamp()),
+    }
+
+
+def test_count_entries_by_category_filters_by_status():
+    http_client = _counting_client()
+    tool = MinifluxCountEntriesByCategoryTool(client=http_client)
+
+    tool.run({"category_names": ["Tech - AI"], "status": "unread"})
+
+    assert http_client.requests[-1][1] == {"limit": 1, "status": "unread"}
+
+
+def test_count_entries_by_category_expands_a_shared_prefix():
+    tool = MinifluxCountEntriesByCategoryTool(client=_counting_client())
+
+    result = tool.run({"category_names": ["news"]})
+
+    assert result == (
+        "- News - MiddleEast: 58 entries\n- News - World: 24 entries\nTotal: 82 entries"
+    )
+
+
+def test_count_entries_by_category_counts_overlapping_names_once():
+    tool = MinifluxCountEntriesByCategoryTool(client=_counting_client())
+
+    result = tool.run({"category_names": ["News", "News - World"]})
+
+    assert result.endswith("Total: 82 entries")
+
+
+def test_count_entries_by_category_rejects_an_unknown_name():
+    tool = MinifluxCountEntriesByCategoryTool(client=_counting_client())
+
+    with pytest.raises(ValueError, match="No category starts with 'Sports'"):
+        tool.run({"category_names": ["Sports"]})
 
 
 def test_run_shows_the_published_time_in_the_given_timezone():

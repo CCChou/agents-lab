@@ -13,6 +13,7 @@ from agent.adapters.current_time import CurrentTimeTool
 from agent.adapters.in_memory_store import InMemoryConversationStore
 from agent.adapters.miniflux import (
     MinifluxArticleReader,
+    MinifluxCountEntriesByCategoryTool,
     MinifluxGetEntryTool,
     MinifluxListCategoriesTool,
     MinifluxQueryTool,
@@ -49,6 +50,7 @@ def _build_tools(llm_client: LLMClient) -> list[Tool]:
     return [
         MinifluxQueryTool(client=client),
         MinifluxListCategoriesTool(client=client),
+        MinifluxCountEntriesByCategoryTool(client=client),
         MinifluxGetEntryTool(client=client),
         fetch_page,
         SummarizeEntryTool(reader=reader, llm_client=llm_client),
@@ -67,6 +69,7 @@ def main() -> None:
         api_key=config.api_key,
         model=spec.model or config.model,
         reasoning_effort=config.reasoning_effort,
+        temperature=config.temperature,
     )
     tools = _build_tools(llm_client)
     store = InMemoryConversationStore()

@@ -320,3 +320,30 @@ def test_stream_omits_reasoning_effort_when_not_configured(monkeypatch):
     list(client.stream([Message.from_text("user", "hi")]))
 
     assert "reasoning_effort" not in json.loads(requests[0].content)
+
+
+def test_stream_sends_the_configured_temperature(monkeypatch):
+    requests = _capture_requests(monkeypatch)
+    client = OpenAICompatibleLLMClient(
+        base_url="https://example.test/v1",
+        api_key="key",
+        model="test-model",
+        temperature=0.0,
+    )
+
+    list(client.stream([Message.from_text("user", "hi")]))
+
+    assert json.loads(requests[0].content)["temperature"] == 0.0
+
+
+def test_stream_omits_temperature_when_not_configured(monkeypatch):
+    requests = _capture_requests(monkeypatch)
+    client = OpenAICompatibleLLMClient(
+        base_url="https://example.test/v1",
+        api_key="key",
+        model="test-model",
+    )
+
+    list(client.stream([Message.from_text("user", "hi")]))
+
+    assert "temperature" not in json.loads(requests[0].content)

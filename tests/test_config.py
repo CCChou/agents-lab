@@ -68,6 +68,28 @@ def test_from_env_defaults_reasoning_effort_to_none_when_unset(monkeypatch):
     assert config.reasoning_effort is None
 
 
+def test_from_env_reads_optional_temperature(monkeypatch):
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "qwen/qwen3.8-27b")
+    monkeypatch.setenv("AGENT_LLM_TEMPERATURE", "0.1")
+
+    config = LLMConfig.from_env()
+
+    assert config.temperature == 0.1
+
+
+def test_from_env_defaults_temperature_to_none_when_unset(monkeypatch):
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "qwen/qwen3.8-27b")
+    monkeypatch.delenv("AGENT_LLM_TEMPERATURE", raising=False)
+
+    config = LLMConfig.from_env()
+
+    assert config.temperature is None
+
+
 def test_miniflux_config_from_env_reads_both_values(monkeypatch):
     monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
     monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
