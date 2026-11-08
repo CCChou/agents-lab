@@ -39,3 +39,12 @@ class SessionRegistry(Protocol):
 @runtime_checkable
 class ArticleReader(Protocol):
     def read(self, entry_id: int) -> Article: ...
+
+
+@runtime_checkable
+class SessionLifecycle(Protocol):
+    """How an entry adapter gets and starts sessions, locally or through the HTTP API (D-035)."""
+
+    def current_or_start(self, owner_id: str) -> str: ...
+
+    def start_new(self, owner_id: str) -> str: ...

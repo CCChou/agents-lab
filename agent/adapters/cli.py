@@ -5,10 +5,9 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from agent.domain.event import Event, TextDelta, ToolLimitReached, ToolStarted
-from agent.domain.interfaces import Agent
+from agent.domain.interfaces import Agent, SessionLifecycle
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
-from agent.use_cases.session_manager import SessionManager
 
 EXIT_COMMANDS = {"exit", "quit"}
 RESET_COMMANDS = {"/reset"}
@@ -85,7 +84,7 @@ def _write_event(event: Event, writer: TextWriter, output: TextIO) -> None:
 
 def run(
     agent: Agent,
-    sessions: SessionManager,
+    sessions: SessionLifecycle,
     input_lines: Iterable[str],
     output: TextIO,
     *,
@@ -108,8 +107,12 @@ def run(
         if message in EXIT_COMMANDS:
             break
         if message in RESET_COMMANDS:
-            sessions.start_new(OWNER_ID)
-            output.write(RESET_MESSAGE)
+            try:
+                sessions.start_new(OWNER_ID)
+            except Exception as exc:  # noqa: BLE001 - a remote session service may be unreachable
+                output.write(f"{ERROR_PREFIX}{exc}\n")
+            else:
+                output.write(RESET_MESSAGE)
             continue
         try:
             session_id = sessions.current_or_start(OWNER_ID)

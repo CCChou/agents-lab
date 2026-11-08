@@ -44,3 +44,9 @@ def test_default_ids_are_unique():
     sessions = SessionManager(InMemorySessionStore())
 
     assert sessions.start_new("cli") != sessions.start_new("cli")
+
+
+def test_satisfies_session_lifecycle_port():
+    from agent.domain.interfaces import SessionLifecycle
+
+    assert isinstance(SessionManager(InMemorySessionStore()), SessionLifecycle)

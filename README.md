@@ -42,6 +42,18 @@ uv run python -m agent
 | `/reset` | 開始新對話，舊對話不再送給模型（見 D-034） |
 | `exit`、`quit` | 離開 |
 
+## 透過服務對話
+
+先啟動服務，再用終端機連過去。這個模式不需要 LLM 和 Miniflux 的環境變數，設定都在服務那一邊。
+
+```bash
+uv run python -m agent serve                                  # 終端機 1
+uv run python -m agent chat                                   # 終端機 2，預設連到 http://127.0.0.1:8000
+uv run python -m agent chat --server http://127.0.0.1:9000
+```
+
+指令和 `python -m agent` 相同。服務沒有啟動時，每則訊息都會顯示連線錯誤，CLI 不會結束。
+
 ## HTTP API
 
 ```bash

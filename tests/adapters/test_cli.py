@@ -374,3 +374,20 @@ def test_prompt_lines_stops_on_ctrl_c():
         raise KeyboardInterrupt
 
     assert list(prompt_lines(read_line)) == []
+
+
+def test_reset_failure_is_reported_and_keeps_the_session_alive():
+    class UnreachableSessions:
+        def current_or_start(self, owner_id: str) -> str:
+            return "s1"
+
+        def start_new(self, owner_id: str) -> str:
+            raise ConnectionError("server is down")
+
+    output = io.StringIO()
+
+    run(ScriptedAgent([TextDelta("ok")]), UnreachableSessions(), ["/reset", "hi"], output)
+
+    assert f"{ERROR_PREFIX}server is down" in output.getvalue()
+    assert RESET_MESSAGE not in output.getvalue()
+    assert "ok" in output.getvalue()

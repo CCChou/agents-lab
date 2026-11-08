@@ -65,7 +65,7 @@
 練習重點：入口 adapter、傳輸邊界、串流。這一階段提前到階段 3 之前，讓 CLI 和 Web 共用同一份 session（見 D-035）。
 
 - [x] 常駐服務和 HTTP API，以 SSE 串流事件
-- [ ] CLI 改成服務的客戶端：`RemoteAgent`、`RemoteSessions`、`SessionLifecycle`
+- [x] CLI 改成服務的客戶端：`RemoteAgent`、`RemoteSessions`、`SessionLifecycle`
 - [ ] Web：開始前先決定從哪裡打開、要不要驗證，以及前端的做法
 
 ### 階段 3：大量文章摘要

@@ -11,6 +11,7 @@ from rich.console import Console
 
 from agent.adapters.cli import MarkdownBlockWriter, prompt_lines, run
 from agent.adapters.current_time import CurrentTimeTool
+from agent.adapters.http.client import RemoteAgent, RemoteSessions
 from agent.adapters.in_memory_store import InMemorySessionStore
 from agent.adapters.miniflux import (
     MinifluxArticleReader,
@@ -23,7 +24,7 @@ from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
 from agent.adapters.web import FetchPageTool
 from agent.agents.rss import build_rss_spec
 from agent.config import LLMConfig, MinifluxConfig
-from agent.domain.interfaces import LLMClient
+from agent.domain.interfaces import Agent, LLMClient, SessionLifecycle
 from agent.domain.tool import Tool
 from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
@@ -62,6 +63,9 @@ def _build_tools(llm_client: LLMClient) -> list[Tool]:
 
 SERVE_HOST = "127.0.0.1"  # D-035: no authentication yet, so never listen beyond localhost
 DEFAULT_PORT = 8000
+DEFAULT_SERVER = f"http://{SERVE_HOST}:{DEFAULT_PORT}"
+# A turn can run for minutes with long gaps between events, e.g. while summarize_entry runs.
+CHAT_TIMEOUT = httpx.Timeout(10.0, read=600.0)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -69,14 +73,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     commands = parser.add_subparsers(dest="command")
     serve = commands.add_parser("serve", help=f"run the HTTP API on {SERVE_HOST}")
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    chat = commands.add_parser("chat", help="chat in the terminal through a running server")
+    chat.add_argument("--server", default=DEFAULT_SERVER)
     return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = _parse_args()
-    if os.environ.get("AGENT_DEBUG"):
-        logging.basicConfig(level=logging.DEBUG)
-
+def _build_local_agent() -> tuple[Agent, SessionManager]:
     config = LLMConfig.from_env()
     spec = build_rss_spec(config.system_prompt)
     llm_client = OpenAICompatibleLLMClient(
@@ -89,14 +91,11 @@ def main() -> None:
     tools = _build_tools(llm_client)
     store = InMemorySessionStore()
     agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
-    sessions = SessionManager(store)
-    if args.command == "serve":
-        import uvicorn
+    return agent, SessionManager(store)
 
-        from agent.adapters.http.api import create_app
 
-        uvicorn.run(create_app(agent, sessions), host=SERVE_HOST, port=args.port)
-    elif sys.stdin.isatty() and sys.stdout.isatty():
+def _run_terminal(agent: Agent, sessions: SessionLifecycle) -> None:
+    if sys.stdin.isatty() and sys.stdout.isatty():
         lines = prompt_lines(PromptSession().prompt)
         run(
             agent,
@@ -108,6 +107,27 @@ def main() -> None:
         )
     else:
         run(agent, sessions, _stdin_lines(), sys.stdout)
+
+
+def main() -> None:
+    args = _parse_args()
+    if os.environ.get("AGENT_DEBUG"):
+        logging.basicConfig(level=logging.DEBUG)
+
+    if args.command == "chat":
+        with httpx.Client(base_url=args.server, timeout=CHAT_TIMEOUT) as client:
+            _run_terminal(RemoteAgent(client), RemoteSessions(client))
+        return
+
+    agent, sessions = _build_local_agent()
+    if args.command == "serve":
+        import uvicorn
+
+        from agent.adapters.http.api import create_app
+
+        uvicorn.run(create_app(agent, sessions), host=SERVE_HOST, port=args.port)
+    else:
+        _run_terminal(agent, sessions)
 
 
 if __name__ == "__main__":
