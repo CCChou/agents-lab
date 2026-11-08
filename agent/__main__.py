@@ -23,12 +23,13 @@ from agent.adapters.miniflux import (
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
 from agent.adapters.web import FetchPageTool
 from agent.agents.rss import build_rss_spec
-from agent.config import LLMConfig, MinifluxConfig
-from agent.domain.interfaces import Agent, LLMClient, SessionLifecycle
+from agent.config import JobsConfig, LLMConfig, MinifluxConfig
+from agent.domain.interfaces import Agent, LLMClient, Notifier, SessionLifecycle
 from agent.domain.session import RetentionRule
 from agent.domain.tool import Tool
 from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
+from agent.use_cases.run_job import RunJob
 from agent.use_cases.session_manager import SessionManager
 from agent.use_cases.summarize_entry import SummarizeEntryTool
 from agent.use_cases.tool_registry import ToolRegistry
@@ -67,6 +68,7 @@ DEFAULT_PORT = 8000
 DEFAULT_SERVER = f"http://{SERVE_HOST}:{DEFAULT_PORT}"
 # A turn can run for minutes with long gaps between events, e.g. while summarize_entry runs.
 CHAT_TIMEOUT = httpx.Timeout(10.0, read=600.0)
+NOTIFY_TIMEOUT = httpx.Timeout(10.0)
 # D-036: the first matching prefix wins; every owner keeps a week, jobs at most seven runs.
 SESSION_RETENTION = (
     RetentionRule("job:", max_age=timedelta(days=7), keep_last=7),
@@ -100,6 +102,18 @@ def _build_local_agent() -> tuple[Agent, SessionManager]:
     return agent, SessionManager(store, store, rules=SESSION_RETENTION)
 
 
+def _build_run_job(agent: Agent, sessions: SessionLifecycle) -> RunJob:
+    from agent.adapters.jobs_toml import TomlJobSource
+    from agent.adapters.notify.slack import SlackWebhookNotifier
+
+    config = JobsConfig.from_env()
+    notifiers: dict[str, Notifier] = {}
+    if config.slack_webhook_url:
+        client = httpx.Client(timeout=NOTIFY_TIMEOUT)
+        notifiers["slack"] = SlackWebhookNotifier(client, config.slack_webhook_url)
+    return RunJob(agent, sessions, TomlJobSource(config.jobs_file), notifiers)
+
+
 def _run_terminal(agent: Agent, sessions: SessionLifecycle) -> None:
     if sys.stdin.isatty() and sys.stdout.isatty():
         lines = prompt_lines(PromptSession().prompt)
@@ -131,7 +145,8 @@ def main() -> None:
 
         from agent.adapters.http.api import create_app
 
-        uvicorn.run(create_app(agent, sessions), host=SERVE_HOST, port=args.port)
+        app = create_app(agent, sessions, run_job=_build_run_job(agent, sessions))
+        uvicorn.run(app, host=SERVE_HOST, port=args.port)
     else:
         _run_terminal(agent, sessions)
 

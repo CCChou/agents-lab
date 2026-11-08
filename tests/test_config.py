@@ -154,3 +154,31 @@ def test_miniflux_config_verify_ssl_false_overrides_ca_bundle_path(monkeypatch):
     config = MinifluxConfig.from_env()
 
     assert config.tls_verify is False
+
+
+def test_jobs_config_defaults_to_jobs_toml_and_no_slack(monkeypatch):
+    from pathlib import Path
+
+    from agent.config import JobsConfig
+
+    monkeypatch.delenv("AGENT_JOBS_FILE", raising=False)
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+
+    config = JobsConfig.from_env()
+
+    assert config.jobs_file == Path("jobs.toml")
+    assert config.slack_webhook_url is None
+
+
+def test_jobs_config_reads_the_file_and_webhook(monkeypatch):
+    from pathlib import Path
+
+    from agent.config import JobsConfig
+
+    monkeypatch.setenv("AGENT_JOBS_FILE", "/etc/agent/jobs.toml")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.test/x")
+
+    config = JobsConfig.from_env()
+
+    assert config.jobs_file == Path("/etc/agent/jobs.toml")
+    assert config.slack_webhook_url == "https://hooks.slack.test/x"

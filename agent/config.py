@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -50,3 +51,16 @@ class MinifluxConfig:
         if self.ca_bundle_path:
             return self.ca_bundle_path
         return True
+
+
+@dataclass(frozen=True)
+class JobsConfig:
+    jobs_file: Path
+    slack_webhook_url: str | None = None
+
+    @classmethod
+    def from_env(cls) -> "JobsConfig":
+        return cls(
+            jobs_file=Path(os.environ.get("AGENT_JOBS_FILE", "jobs.toml")),
+            slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
+        )

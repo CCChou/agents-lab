@@ -325,3 +325,12 @@
 - 原因：`serve` 是常駐服務，資料雖然只存在記憶體，重啟前仍會一直累積；每次排程任務都會開一個 session，`ConversationStore` 又保存完整的工具結果（D-020），累積得更快。回收屬於 session 生命週期，放在 `SessionManager`（D-034），儲存那一側只提供列出和刪除。依數量回收適合排程任務，舊的摘要沒有追問的價值；依時間回收適用於所有 owner。在 `start_new` 時順便執行，不需要另外的排程。目前的 session 不刪，避免正在進行的對話被刪除。
 - 考慮過但沒選：不回收，等持久化再處理，常駐服務在重啟前會一直累積；只依時間，任務的 session 在期限內仍會累積；只依數量，很少開新 session 的 owner 會一直保留舊資料；任務送出通知後立即刪除 session，以後就無法追問；用 timer 呼叫獨立的回收 endpoint，目前資料量小，不需要額外的排程。
 - 重新評估的時機：需要保證準時刪除時（例如隱私的考量），新增 `POST /maintenance/prune`，由 systemd timer 定期呼叫 `prune()`；資料量變大、回收讓 `start_new` 明顯變慢時，同樣改用 timer 定期回收；做持久化（階段 5）時，`SqliteSessionStore` 要實作同樣的方法，並把列出和刪除放在同一個 transaction；多個客戶端共用同一個 owner 時，非目前的 session 可能在使用中被刪除，被刪除的 session 在這一輪結束時會被寫回成孤兒資料，需要時再加上使用中的標記；需要依使用者調整規則時，改從設定檔讀取。
+
+## D-037：排程任務由 `RunJob` 交付，agent 只產生內容
+
+- 日期：2026-11-08
+- 狀態：生效中
+- 決定：新增 use case `RunJob`：依名稱從 `JobSource` 取得 `Job`（`name`、`prompt`、`channels`），以 owner `job:{name}` 開新 session，呼叫 `Agent.run()`，把 `TextDelta` 接成完整的 Markdown，再交給 `job.channels` 列出的每個 `Notifier`；agent 失敗時改送錯誤通知。`Notification` 包含 `title`、`markdown` 和 `session_id`，`session_id` 目前不顯示在通知裡，等有 `resume` 再用。`Notifier` 和 `JobSource` 是 domain 介面，第一個實作是 `SlackWebhookNotifier`（在 adapter 裡把 Markdown 轉成 Slack 的 mrkdwn，表格轉成列表）和 `TomlJobSource`。任務定義放在 `jobs.toml`，路徑由 `AGENT_JOBS_FILE` 指定，預設是專案根目錄；專案只放 `jobs.example.toml`，`jobs.toml` 加進 `.gitignore`。webhook 網址由環境變數 `SLACK_WEBHOOK_URL` 指定。HTTP API 新增 `POST /jobs/{name}/run`，等任務完成才回應：成功回傳 200 和 `session_id`，agent 失敗但錯誤通知已送出回傳 502，通知送不出去回傳 500，找不到任務回傳 404。觸發由 systemd timer 用 `curl` 呼叫這個 endpoint，服務本身不負責排程。互動仍只透過 CLI 和 Web，通知是單向的，追問時回到對話中進行。
+- 原因：每天送出摘要是一定要做到的事，不能交給模型決定（同 D-025）。agent 有送出訊息的工具時，文章內容可能誘導它把資料送到其他地方，風險比 `fetch_page` 更高（D-021）。產生內容和交付分開後，CLI 可以用同一個 agent 而不會送出通知；`RunJob` 只依賴 `Agent` 介面，以後把 `LoopAgent` 換成每日摘要的 workflow（D-031），交付不用改。輸出要送到哪裡由呼叫者決定，跟 CLI 把事件印到終端機相同。呈現格式在 adapter 裡轉換，模型一律輸出 Markdown（同 D-026）。時間交給 systemd timer，錯過時可以補跑，記錄也在 journald；任務定義、執行和格式轉換放在專案裡，才能測試。等任務完成才回應，systemd 能從 `curl` 的結束代碼判斷成功或失敗。
+- 考慮過但沒選：agent 用工具送出通知，不保證每次都送，還有副作用和 prompt injection 的風險；送出作為 workflow 的最後一步，內容和交付綁在一起，在 CLI 裡用同一個流程也會送出；外部 script 解析 SSE 並送出，格式轉換沒有測試；服務內建排程器，要自己處理重啟、補跑和重複執行，目前不需要讓 agent 管理排程；HTTP endpoint 自己協調 agent 和通知，交付的規則會放在 adapter 裡；Slack 互動式 bot，互動只透過 CLI 和 Web。
+- 重新評估的時機：要讓 agent 在對話中管理排程時，改成服務內建排程，並搭配 `Policy` 確認（D-005），任務定義和 `Notifier` 可以沿用；需要依內容判斷要不要通知時，讓模型在回答裡標示，由 `RunJob` 決定，送出仍不交給模型；摘要品質不穩定時，用 workflow 取代 `LoopAgent`；同一個任務可能同時被觸發時，加上執行中的鎖；有 `resume` 後，在通知裡附上追問的方式；Slack 的區塊長度不夠時，切成多則訊息。

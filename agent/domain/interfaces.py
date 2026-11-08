@@ -4,6 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from agent.domain.article import Article
 from agent.domain.event import Event
+from agent.domain.job import Job, Notification
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
 from agent.domain.session import SessionInfo
@@ -60,3 +61,15 @@ class SessionLifecycle(Protocol):
     def current_or_start(self, owner_id: str) -> str: ...
 
     def start_new(self, owner_id: str) -> str: ...
+
+
+@runtime_checkable
+class Notifier(Protocol):
+    def send(self, notification: Notification) -> None: ...
+
+
+@runtime_checkable
+class JobSource(Protocol):
+    def get(self, name: str) -> Job:
+        """Raise UnknownJobError when no job has this name."""
+        ...

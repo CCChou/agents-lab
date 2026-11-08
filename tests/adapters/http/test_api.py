@@ -13,10 +13,12 @@ from agent.adapters.http.wire import (
 from agent.adapters.in_memory_store import InMemorySessionStore
 from agent.domain.agent_spec import AgentSpec
 from agent.domain.event import Event, TextDelta, ToolStarted
+from agent.domain.job import UnknownJobError
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
 from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
+from agent.use_cases.run_job import JobResult, NotificationError
 from agent.use_cases.session_manager import SessionManager
 from agent.use_cases.tool_registry import ToolRegistry
 
@@ -161,3 +163,69 @@ def test_send_message_requires_text():
     response = client.post(f"/sessions/{create_session(client)}/messages", json={})
 
     assert response.status_code == 422
+
+
+# --- jobs (D-037) ---
+
+
+class FakeRunJob:
+    def __init__(self, outcome) -> None:
+        self._outcome = outcome
+        self.names: list[str] = []
+
+    def run(self, name: str):
+        self.names.append(name)
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return self._outcome
+
+
+def job_client(outcome) -> tuple[TestClient, FakeRunJob]:
+    store = InMemorySessionStore()
+    run_job = FakeRunJob(outcome)
+    app = create_app(ScriptedAgent([]), SessionManager(store, store), run_job=run_job)
+    return TestClient(app), run_job
+
+
+def test_run_job_returns_the_session_when_it_was_delivered():
+    client, run_job = job_client(JobResult(session_id="s1"))
+
+    response = client.post("/jobs/daily-digest/run")
+
+    assert run_job.names == ["daily-digest"]
+    assert response.status_code == 200
+    assert response.json() == {"session_id": "s1", "error": None}
+
+
+def test_run_job_reports_502_when_the_agent_failed_but_the_notice_went_out():
+    client, _ = job_client(JobResult(session_id="s1", error="rate limited"))
+
+    response = client.post("/jobs/daily-digest/run")
+
+    assert response.status_code == 502
+    assert response.json() == {"session_id": "s1", "error": "rate limited"}
+
+
+def test_run_job_reports_404_for_an_unknown_job():
+    client, _ = job_client(UnknownJobError("nope: not defined"))
+
+    response = client.post("/jobs/nope/run")
+
+    assert response.status_code == 404
+    assert response.json() == {"session_id": None, "error": "nope: not defined"}
+
+
+def test_run_job_reports_500_when_delivery_or_configuration_failed():
+    for error in (NotificationError("slack: down"), ValueError("no notifier for mail")):
+        client, _ = job_client(error)
+
+        response = client.post("/jobs/daily-digest/run")
+
+        assert response.status_code == 500
+        assert response.json()["error"] == str(error)
+
+
+def test_jobs_are_not_served_when_no_runner_is_configured():
+    client, _ = make_client()
+
+    assert client.post("/jobs/daily-digest/run").status_code == 404

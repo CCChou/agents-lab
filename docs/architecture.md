@@ -23,6 +23,8 @@
 ┌─ use_cases ───────────────────────────────┴───────────┐
 │  Session lifecycle:                                   │
 │    SessionManager                                     │
+│  Job delivery:                                        │
+│    RunJob                                             │
 │  Agent implementations:                               │
 │    LoopAgent(spec)        DigestAgent*                │
 │  Shared by LoopAgent:                                 │
@@ -36,10 +38,11 @@
 │  Ports: Agent  LLMClient  Tool  Policy*               │
 │         ConversationStore  SessionRegistry            │
 │         SessionLifecycle                              │
+│         Notifier  JobSource                           │
 │         MemoryStore*  BlobStore*  ArticleReader       │
 │  Data:  AgentSpec  AgentRequest  Event                │
 │         Message  ContentPart  ToolCall  Article       │
-│         SessionInfo  RetentionRule                    │
+│         SessionInfo  RetentionRule  Job  Notification │
 └───────────────────────────▲───────────────────────────┘
                             │ implements
 ┌─ infrastructure adapters ─┴───────────────────────────┐
@@ -50,6 +53,7 @@
 │  MinifluxListCategoriesTool                           │
 │  MinifluxCountEntriesByCategoryTool                   │
 │  RemoteAgent                  RemoteSessions          │
+│  SlackWebhookNotifier         TomlJobSource           │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -67,11 +71,15 @@
 | `ConversationStore` | domain 介面 | Session 的內容角色：依 session 讀寫和刪除訊息 | 已實作，目前只有 `InMemorySessionStore` |
 | `SessionRegistry` | domain 介面 | Session 的生命週期角色：記住每個 owner 有哪些 session、建立時間，以及目前用哪個（見 D-034、D-036） | 已實作，目前只有 `InMemorySessionStore` |
 | `SessionManager` | use_cases | 管理 session 生命週期，是唯一同時處理兩個 session 角色的元件；開新 session 時依 `RetentionRule` 回收舊的（見 D-034、D-036） | 已實作 `current_or_start`、`start_new`、`prune`；`resume`、`clear`、列出 session 計畫中 |
-| HTTP API | entry adapters | 用 HTTP 提供 session 和 SSE 事件串流，只綁定 `127.0.0.1`（見 D-035） | 已實作 `POST /sessions`、`POST /sessions/{id}/messages` |
+| HTTP API | entry adapters | 用 HTTP 提供 session 和 SSE 事件串流，只綁定 `127.0.0.1`（見 D-035） | 已實作 `POST /sessions`、`POST /sessions/{id}/messages`、`POST /jobs/{name}/run` |
 | `wire` | adapters | HTTP 邊界的傳輸 DTO，以及和 `Event` 互相轉換的函式，服務端和客戶端共用（見 D-035） | 已實作 |
 | `SessionLifecycle` | domain 介面 | 入口取得和開新 session 的方式，讓 CLI 可以換成遠端版本（見 D-035） | 已實作，由 `SessionManager` 和 `RemoteSessions` 實作 |
 | `RemoteAgent` | adapters | 透過 HTTP API 實作 `Agent`，把 SSE 還原成 `Event`，收到 `turn_failed` 或串流提前結束時丟出例外 | 已實作 |
 | `RemoteSessions` | adapters | 透過 HTTP API 實作 `SessionLifecycle`，在客戶端記住每個 owner 目前的 session | 已實作 |
+| `RunJob` | use_cases | 執行排程任務：以 owner `job:{name}` 開 session、呼叫 `Agent`、把回答交給每個通道，失敗時送錯誤通知（見 D-037） | 已實作 |
+| `Job`、`Notification` | domain 資料 | 任務定義（`name`、`prompt`、`channels`）和要送出的通知（`title`、`markdown`、`session_id`） | 已實作 |
+| `Notifier` | domain 介面 | 把一份通知送到一個通道 | 已實作，目前只有 `SlackWebhookNotifier`（在 adapter 裡轉成 mrkdwn） |
+| `JobSource` | domain 介面 | 依名稱取得任務定義 | 已實作，目前只有 `TomlJobSource`，每次都重新讀取 `jobs.toml` |
 | `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
 | `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
 | `Message` | domain 資料 | 對話訊息 | 已實作，`ContentPart` 目前只有 `TextPart` |
@@ -95,6 +103,7 @@
 - 入口不產生 session id，只提供 owner，透過 `SessionManager` 取得目前的 session。指令文字（例如 `/reset`）由入口解析。
 - `LoopAgent` 和 `ContextBuilder` 只認 `session_id`，不知道 owner 和 session 生命週期。
 - HTTP 邊界用 `wire` 的 DTO，不直接序列化 domain 的型別；`turn_completed` 和 `turn_failed` 只存在於傳輸層。
+- 產生內容和送出內容分開：`Agent` 的實作只產生內容，不知道通知；送出只由 `RunJob` 負責，agent 沒有送出訊息的工具。模型一律輸出 Markdown，各通道的格式在 `Notifier` 的 adapter 裡轉換。
 - `ConversationStore` 和 `SessionRegistry` 是同一個 Session 概念的兩個角色，由同一個 adapter 實作；需要同時處理兩者的操作只放在 `SessionManager`。
 
 ## 現行訊息流程（`LoopAgent`）

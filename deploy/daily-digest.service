@@ -1,0 +1,10 @@
+# Triggers one job run (D-037). curl -f exits non-zero on 404/500/502, so a failed run shows up
+# in `systemctl status` and journald.
+[Unit]
+Description=Run the daily-digest job
+Requires=agent.service
+After=agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl -fsS --max-time 900 -X POST http://127.0.0.1:8000/jobs/daily-digest/run

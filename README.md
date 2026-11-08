@@ -30,6 +30,8 @@ source prod.env
 | `MINIFLUX_CA_BUNDLE` | | 自訂 CA 憑證的路徑 |
 | `MINIFLUX_VERIFY_SSL` | | 設成 `false` 可以關閉憑證檢查，預設是 `true` |
 | `AGENT_DEBUG` | | 有設定時輸出 debug 記錄 |
+| `AGENT_JOBS_FILE` | | 排程任務的定義檔，預設是 `jobs.toml` |
+| `SLACK_WEBHOOK_URL` | | Slack incoming webhook 的網址，沒有設定時不能使用 `slack` 通道 |
 
 ## 在終端機對話
 
@@ -94,6 +96,52 @@ curl -N -X POST "localhost:8000/sessions/$sid/messages" \
 - 送到不存在的 session id 不會報錯，會被當成新的空對話
 - session 保留 7 天，排程任務的 session 最多保留 7 個；每個 owner 目前的 session 不會被刪除（見 D-036）
 - 服務重啟後，所有 session 都會遺失
+
+## 排程任務與通知
+
+任務定義在 `jobs.toml`（已被 `.gitignore` 忽略），從範例複製一份來改：
+
+```bash
+cp jobs.example.toml jobs.toml
+```
+
+```toml
+[jobs.daily-digest]
+prompt = "過去 24 小時的科技和新聞趨勢，各推薦最多 5 篇值得讀的文章"
+channels = ["slack"]
+```
+
+`jobs.toml` 每次執行都會重新讀取，修改後不用重啟服務。服務啟動後，用 HTTP 觸發一個任務：
+
+```bash
+curl -fsS -X POST localhost:8000/jobs/daily-digest/run
+```
+
+服務會等任務做完才回應（見 D-037）：
+
+| 狀態碼 | 意思 |
+| --- | --- |
+| `200` | 已送出，回傳 `session_id` |
+| `502` | agent 失敗，錯誤通知已送出 |
+| `500` | 通知送不出去，或任務用了沒有設定的通道 |
+| `404` | 找不到這個任務 |
+
+## 部署（systemd）
+
+`deploy/` 是範例，複製到 `/etc/systemd/system/` 後，依機器修改路徑和使用者：
+
+| 檔案 | 作用 |
+| --- | --- |
+| `agent.service` | 常駐執行 `python -m agent serve`，先 `source prod.env` 再啟動 |
+| `daily-digest.service` | 用 `curl` 呼叫一次 `POST /jobs/daily-digest/run`，失敗時結束代碼不是 0 |
+| `daily-digest.timer` | 每天 08:00（機器的時區）觸發，錯過時會在開機後補跑 |
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent.service daily-digest.timer
+systemctl list-timers daily-digest.timer
+journalctl -u agent.service -u daily-digest.service
+```
 
 ## 開發
 

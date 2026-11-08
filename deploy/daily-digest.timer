@@ -1,0 +1,10 @@
+# Uses the machine's local time zone. Persistent= runs a missed trigger after the machine is back.
+[Unit]
+Description=Run the daily-digest job every morning
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

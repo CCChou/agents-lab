@@ -19,6 +19,11 @@ class SendMessageBody(BaseModel):
     text: str
 
 
+class RunJobResponse(BaseModel):
+    session_id: str | None = None
+    error: str | None = None
+
+
 class TextDeltaPayload(BaseModel):
     type: Literal["text_delta"] = "text_delta"
     text: str

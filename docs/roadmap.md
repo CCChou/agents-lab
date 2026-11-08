@@ -7,6 +7,7 @@
 - 終端機多輪對話，對話記憶只存在記憶體
 - 輸入 `/reset` 開始新對話，舊對話保留但不再送給模型（見 D-034）
 - `python -m agent serve` 在本機提供 HTTP API，以 SSE 串流回覆和工具事件（見 D-035）
+- 排程任務：systemd timer 觸發 `jobs.toml` 定義的任務，結果送到 Slack（見 D-037）
 - 支援任何 OpenAI 相容的 Chat Completions API，可選填 `reasoning_effort`（見 D-023）
 - 工具呼叫迴圈
 - 用 Miniflux 工具查詢 RSS 文章的標題、feed、category、已讀狀態、發布時間和網址，由新到舊排序
@@ -109,8 +110,10 @@
 
 練習重點：常駐程序、排程、訊息介面。
 
-- 新增通知通道（Slack、LINE、mail），只用來單向送出排程任務的結果；互動只透過 CLI 和 Web。通道和排程的設計還沒確定
-- 每天定時產生摘要並推播到手機
+- [x] 排程任務由 `RunJob` 交付，systemd timer 呼叫 `POST /jobs/{name}/run`（見 D-037）
+- [x] 第一個通知通道：Slack incoming webhook
+- [ ] 其他通知通道（LINE、mail）；通知只單向送出排程任務的結果，互動只透過 CLI 和 Web
+- [ ] 實際部署到常駐的機器，確認每天的摘要品質
 - 需要在訊息平台上確認動作時，重新評估 D-005
 
 ### 階段 7：第二類 agent（家庭 agent）

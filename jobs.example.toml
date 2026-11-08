@@ -1,0 +1,6 @@
+# Copy to jobs.toml (ignored by git). Each [jobs.<name>] runs with POST /jobs/<name>/run (D-037).
+# channels lists notifiers configured in the service: "slack" needs SLACK_WEBHOOK_URL.
+
+[jobs.daily-digest]
+prompt = "過去 24 小時的科技和新聞趨勢，各推薦最多 5 篇值得讀的文章"
+channels = ["slack"]
