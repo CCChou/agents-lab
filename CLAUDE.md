@@ -29,6 +29,7 @@ This project is developed test-first. For every change:
 
 | File | Contents | Read when |
 | --- | --- | --- |
+| `README.md` | Setup, environment variables, CLI commands, HTTP API usage | Running the project or changing how it is used |
 | `docs/architecture.md` | Components, layers, boundaries, current vs planned status | Adding or changing components |
 | `docs/decisions.md` | Design decisions, rejected options, when to revisit | Changing a design or proposing an approach |
 | `docs/roadmap.md` | Stages, known issues, open questions | Starting new work |

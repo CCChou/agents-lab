@@ -130,4 +130,4 @@
 
 ## 執行方式
 
-`uv run python -m agent` 在同一個程序裡用終端機對話。`uv run python -m agent serve [--port 8000]` 在 `127.0.0.1` 啟動 HTTP API。環境變數見 `agent/config.py`，`AGENT_DEBUG` 見 `agent/__main__.py`。`rss` agent 需要 Miniflux 設定才能啟動。
+安裝、環境變數、終端機對話和 HTTP API 的用法見 `README.md`。
