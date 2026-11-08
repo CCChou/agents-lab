@@ -39,6 +39,7 @@
 │         MemoryStore*  BlobStore*  ArticleReader       │
 │  Data:  AgentSpec  AgentRequest  Event                │
 │         Message  ContentPart  ToolCall  Article       │
+│         SessionInfo  RetentionRule                    │
 └───────────────────────────▲───────────────────────────┘
                             │ implements
 ┌─ infrastructure adapters ─┴───────────────────────────┐
@@ -63,9 +64,9 @@
 | `Event` | domain 資料 | 統一的輸出格式 | 已實作：`TextDelta`、`ToolStarted`、`ToolLimitReached` |
 | `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 已實作，目前組合指令和對話，並清除舊的工具結果 |
 | `ToolRegistry` | use_cases | 依名稱找到工具，名稱不存在時在啟動就報錯 | 已實作 |
-| `ConversationStore` | domain 介面 | Session 的內容角色：依 session 讀寫訊息 | 已實作，目前只有 `InMemorySessionStore`；`delete` 計畫中 |
-| `SessionRegistry` | domain 介面 | Session 的生命週期角色：記住每個 owner 目前用哪個 session（見 D-034） | 已實作，目前只有 `InMemorySessionStore` |
-| `SessionManager` | use_cases | 管理 session 生命週期，是唯一同時處理兩個 session 角色的元件（見 D-034） | 已實作 `current_or_start`、`start_new`；`resume`、`clear`、列出 session 計畫中 |
+| `ConversationStore` | domain 介面 | Session 的內容角色：依 session 讀寫和刪除訊息 | 已實作，目前只有 `InMemorySessionStore` |
+| `SessionRegistry` | domain 介面 | Session 的生命週期角色：記住每個 owner 有哪些 session、建立時間，以及目前用哪個（見 D-034、D-036） | 已實作，目前只有 `InMemorySessionStore` |
+| `SessionManager` | use_cases | 管理 session 生命週期，是唯一同時處理兩個 session 角色的元件；開新 session 時依 `RetentionRule` 回收舊的（見 D-034、D-036） | 已實作 `current_or_start`、`start_new`、`prune`；`resume`、`clear`、列出 session 計畫中 |
 | HTTP API | entry adapters | 用 HTTP 提供 session 和 SSE 事件串流，只綁定 `127.0.0.1`（見 D-035） | 已實作 `POST /sessions`、`POST /sessions/{id}/messages` |
 | `wire` | adapters | HTTP 邊界的傳輸 DTO，以及和 `Event` 互相轉換的函式，服務端和客戶端共用（見 D-035） | 已實作 |
 | `SessionLifecycle` | domain 介面 | 入口取得和開新 session 的方式，讓 CLI 可以換成遠端版本（見 D-035） | 已實作，由 `SessionManager` 和 `RemoteSessions` 實作 |

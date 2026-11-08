@@ -92,6 +92,7 @@ curl -N -X POST "localhost:8000/sessions/$sid/messages" \
 
 - 中途斷線時，這一輪不會保存
 - 送到不存在的 session id 不會報錯，會被當成新的空對話
+- session 保留 7 天，排程任務的 session 最多保留 7 個；每個 owner 目前的 session 不會被刪除（見 D-036）
 - 服務重啟後，所有 session 都會遺失
 
 ## 開發

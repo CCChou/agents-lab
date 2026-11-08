@@ -33,7 +33,8 @@ def make_agent(llm_client, store: InMemorySessionStore | None = None) -> LoopAge
 
 
 def make_sessions(store: InMemorySessionStore | None = None) -> SessionManager:
-    return SessionManager(store or InMemorySessionStore())
+    store = store or InMemorySessionStore()
+    return SessionManager(store, store)
 
 
 class FakeLLMClient:

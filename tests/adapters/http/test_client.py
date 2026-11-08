@@ -147,7 +147,7 @@ def make_remote_cli(llm_client):
     agent = LoopAgent(
         AgentSpec(name="test"), llm_client, store, ContextBuilder(store), ToolRegistry([])
     )
-    http = TestClient(create_app(agent, SessionManager(store)))
+    http = TestClient(create_app(agent, SessionManager(store, store)))
     return RemoteAgent(http), RemoteSessions(http), io.StringIO()
 
 

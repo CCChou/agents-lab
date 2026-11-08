@@ -1,6 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
 from agent.adapters.in_memory_store import InMemorySessionStore
 from agent.domain.interfaces import ConversationStore, SessionRegistry
 from agent.domain.message import Message
+from agent.domain.session import SessionInfo
 
 
 def test_satisfies_conversation_store_port():
@@ -67,3 +70,57 @@ def test_switching_the_current_session_keeps_the_old_messages():
 
     assert store.load("s2") == []
     assert store.load("s1") == [Message.from_text("user", "hi")]
+
+
+T0 = datetime(2026, 11, 1, tzinfo=UTC)
+
+
+def test_sessions_lists_the_sessions_of_an_owner_oldest_first():
+    store = InMemorySessionStore()
+    store.add("cli", "s2", T0 + timedelta(hours=1))
+    store.add("cli", "s1", T0)
+    store.add("web", "s3", T0)
+
+    assert store.sessions("cli") == [
+        SessionInfo("s1", T0),
+        SessionInfo("s2", T0 + timedelta(hours=1)),
+    ]
+    assert store.sessions("nobody") == []
+
+
+def test_owners_lists_every_owner_with_sessions():
+    store = InMemorySessionStore()
+    store.add("cli", "s1", T0)
+    store.add("job:daily", "s2", T0)
+
+    assert sorted(store.owners()) == ["cli", "job:daily"]
+
+
+def test_remove_forgets_only_that_session():
+    store = InMemorySessionStore()
+    store.add("cli", "s1", T0)
+    store.add("cli", "s2", T0)
+
+    store.remove("cli", "s1")
+
+    assert store.sessions("cli") == [SessionInfo("s2", T0)]
+
+
+def test_removing_the_last_session_forgets_the_owner():
+    store = InMemorySessionStore()
+    store.add("cli", "s1", T0)
+
+    store.remove("cli", "s1")
+
+    assert store.owners() == []
+
+
+def test_delete_drops_the_messages_of_that_session_only():
+    store = InMemorySessionStore()
+    store.append("s1", [Message.from_text("user", "hi")])
+    store.append("s2", [Message.from_text("user", "keep")])
+
+    store.delete("s1")
+
+    assert store.load("s1") == []
+    assert store.load("s2") == [Message.from_text("user", "keep")]

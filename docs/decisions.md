@@ -316,3 +316,12 @@
 - 原因：互動方式只有 CLI 和 Web，兩者要看到同一份 session，狀態必須集中在一個服務。這和 OpenClaw 的 Gateway、Hermes Agent 多種模式共用同一個核心的做法相同。新的入口只是另一個 adapter，`LoopAgent`、`ContextBuilder` 和 domain 都不用改；CLI 原本就只依賴 `Agent`，換成 `RemoteAgent` 後畫面和錯誤處理都能沿用。傳輸 DTO 和 domain 分開，domain 可以自由重構而不影響客戶端，也和 `_to_langchain_message`、Miniflux adapter 在其他邊界的做法一致；同一個程序裡的各層直接用 domain 的型別，不另外定義 DTO。`Event` 是單向的事件串流，ChatGPT、Claude API 和 A2A 的文字串流也都用 SSE；SSE 是一般的 HTTP，重連是內建的，TUI 用 `httpx` 就能讀。目前不需要在執行中途向客戶端要求權限（D-005 維持原樣），所以不需要雙向的傳輸。保留同一個程序的 CLI 模式，開發和除錯時不用先啟動服務。
 - 考慮過但沒選：WebSocket，雙向但要自己處理重連、心跳和訊息編號，目前用不到；直接用 `dataclasses.asdict` 序列化 domain 的型別，沒有型別標記，domain 的命名也會變成對外契約；送出訊息同時提供 JSON 和 SSE，現在沒有不需要串流的客戶端；客戶端另外定義一份 DTO，服務端和客戶端都在 adapter 層，共用不違反依賴規則；CLI 只保留客戶端模式，開發時每次都要先啟動服務；由服務負責排程並推送到 Slack 等通知通道，通知的設計還沒確定，先不做。
 - 重新評估的時機：要從其他機器打開 Web，或服務不再只綁定 `127.0.0.1` 時，先加上驗證或透過 Tailscale、SSH tunnel；執行中途需要向客戶端要求確認（`Policy`、D-005）時，先試「SSE 送出需要輸入的事件，客戶端用新的請求回答」，不夠時再換 WebSocket；服務需要在沒有請求時主動推送時，改用 WebSocket；服務重啟後 session 會遺失，需要保留時做持久化（階段 5）；Web 改用 TypeScript 等其他語言時，由 Pydantic 產生 JSON Schema 給客戶端。
+
+## D-036：Session 由 `SessionManager` 依時間和數量回收
+
+- 日期：2026-11-08
+- 狀態：生效中
+- 決定：`SessionManager` 在每次 `start_new` 開新 session 後執行回收，依 owner 套用 `RetentionRule`（`owner_prefix`、`max_age`、`keep_last`）：超過 `max_age` 或不在最新 `keep_last` 個以內的 session 都刪除，兩條規則符合任一條就刪。每個 owner 目前的 session 永遠不刪。預設規則在組裝時設定：`job:` 保留 7 天、最多 7 個；其他 owner 保留 7 天，不限數量。`SessionRegistry` 新增 `sessions(owner_id)`（回傳 session id 和建立時間）和 `remove(owner_id, session_id)`，`ConversationStore` 新增 `delete(session_id)`，`InMemorySessionStore` 同時實作這些方法。時間由注入的 clock 取得。
+- 原因：`serve` 是常駐服務，資料雖然只存在記憶體，重啟前仍會一直累積；每次排程任務都會開一個 session，`ConversationStore` 又保存完整的工具結果（D-020），累積得更快。回收屬於 session 生命週期，放在 `SessionManager`（D-034），儲存那一側只提供列出和刪除。依數量回收適合排程任務，舊的摘要沒有追問的價值；依時間回收適用於所有 owner。在 `start_new` 時順便執行，不需要另外的排程。目前的 session 不刪，避免正在進行的對話被刪除。
+- 考慮過但沒選：不回收，等持久化再處理，常駐服務在重啟前會一直累積；只依時間，任務的 session 在期限內仍會累積；只依數量，很少開新 session 的 owner 會一直保留舊資料；任務送出通知後立即刪除 session，以後就無法追問；用 timer 呼叫獨立的回收 endpoint，目前資料量小，不需要額外的排程。
+- 重新評估的時機：資料量變大、回收讓 `start_new` 明顯變慢時，改用 timer 定期回收；做持久化（階段 5）時，`SqliteSessionStore` 要實作同樣的方法，並把列出和刪除放在同一個 transaction；多個客戶端共用同一個 owner 時，非目前的 session 可能在使用中被刪除，被刪除的 session 在這一輪結束時會被寫回成孤兒資料，需要時再加上使用中的標記；需要依使用者調整規則時，改從設定檔讀取。

@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 from prompt_toolkit import PromptSession
@@ -25,6 +25,7 @@ from agent.adapters.web import FetchPageTool
 from agent.agents.rss import build_rss_spec
 from agent.config import LLMConfig, MinifluxConfig
 from agent.domain.interfaces import Agent, LLMClient, SessionLifecycle
+from agent.domain.session import RetentionRule
 from agent.domain.tool import Tool
 from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
@@ -66,6 +67,11 @@ DEFAULT_PORT = 8000
 DEFAULT_SERVER = f"http://{SERVE_HOST}:{DEFAULT_PORT}"
 # A turn can run for minutes with long gaps between events, e.g. while summarize_entry runs.
 CHAT_TIMEOUT = httpx.Timeout(10.0, read=600.0)
+# D-036: the first matching prefix wins; every owner keeps a week, jobs at most seven runs.
+SESSION_RETENTION = (
+    RetentionRule("job:", max_age=timedelta(days=7), keep_last=7),
+    RetentionRule("", max_age=timedelta(days=7)),
+)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -91,7 +97,7 @@ def _build_local_agent() -> tuple[Agent, SessionManager]:
     tools = _build_tools(llm_client)
     store = InMemorySessionStore()
     agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
-    return agent, SessionManager(store)
+    return agent, SessionManager(store, store, rules=SESSION_RETENTION)
 
 
 def _run_terminal(agent: Agent, sessions: SessionLifecycle) -> None:

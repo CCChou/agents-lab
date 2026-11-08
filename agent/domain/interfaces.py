@@ -1,10 +1,12 @@
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from agent.domain.article import Article
 from agent.domain.event import Event
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
+from agent.domain.session import SessionInfo
 from agent.domain.tool import Tool, ToolCall
 
 
@@ -28,12 +30,22 @@ class ConversationStore(Protocol):
 
     def append(self, session_id: str, messages: list[Message]) -> None: ...
 
+    def delete(self, session_id: str) -> None: ...
+
 
 @runtime_checkable
 class SessionRegistry(Protocol):
     def current(self, owner_id: str) -> str | None: ...
 
     def set_current(self, owner_id: str, session_id: str) -> None: ...
+
+    def add(self, owner_id: str, session_id: str, created_at: datetime) -> None: ...
+
+    def sessions(self, owner_id: str) -> list[SessionInfo]: ...
+
+    def owners(self) -> list[str]: ...
+
+    def remove(self, owner_id: str, session_id: str) -> None: ...
 
 
 @runtime_checkable

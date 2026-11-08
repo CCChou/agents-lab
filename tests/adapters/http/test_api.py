@@ -56,7 +56,7 @@ def make_client(llm_client=None, agent=None) -> tuple[TestClient, InMemorySessio
         ContextBuilder(store),
         ToolRegistry([]),
     )
-    return TestClient(create_app(agent, SessionManager(store))), store
+    return TestClient(create_app(agent, SessionManager(store, store))), store
 
 
 def parse_sse(body: str) -> list:
