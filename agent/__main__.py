@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import sys
@@ -59,7 +60,20 @@ def _build_tools(llm_client: LLMClient) -> list[Tool]:
     ]
 
 
+SERVE_HOST = "127.0.0.1"  # D-035: no authentication yet, so never listen beyond localhost
+DEFAULT_PORT = 8000
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="python -m agent")
+    commands = parser.add_subparsers(dest="command")
+    serve = commands.add_parser("serve", help=f"run the HTTP API on {SERVE_HOST}")
+    serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    return parser.parse_args(argv)
+
+
 def main() -> None:
+    args = _parse_args()
     if os.environ.get("AGENT_DEBUG"):
         logging.basicConfig(level=logging.DEBUG)
 
@@ -76,7 +90,13 @@ def main() -> None:
     store = InMemorySessionStore()
     agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
     sessions = SessionManager(store)
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    if args.command == "serve":
+        import uvicorn
+
+        from agent.adapters.http.api import create_app
+
+        uvicorn.run(create_app(agent, sessions), host=SERVE_HOST, port=args.port)
+    elif sys.stdin.isatty() and sys.stdout.isatty():
         lines = prompt_lines(PromptSession().prompt)
         run(
             agent,

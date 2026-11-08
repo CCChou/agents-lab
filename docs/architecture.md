@@ -15,7 +15,7 @@
                             │ wires everything
                             ▼
 ┌─ entry adapters ──────────────────────────────────────┐
-│  CLI              LINE*              Scheduler*       │
+│  CLI          HTTP API          LINE*      Scheduler* │
 └──────────┬────────────────────────────────▲───────────┘
            │ owner_id → session_id          │
            │ AgentRequest                   │ Event
@@ -35,6 +35,7 @@
 ┌─ domain ──────────────────────────────────────────────┐
 │  Ports: Agent  LLMClient  Tool  Policy*               │
 │         ConversationStore  SessionRegistry            │
+│         SessionLifecycle*                             │
 │         MemoryStore*  BlobStore*  ArticleReader       │
 │  Data:  AgentSpec  AgentRequest  Event                │
 │         Message  ContentPart  ToolCall  Article       │
@@ -47,6 +48,7 @@
 │  MinifluxArticleReader        SqliteStores*           │
 │  MinifluxListCategoriesTool                           │
 │  MinifluxCountEntriesByCategoryTool                   │
+│  RemoteAgent*                 RemoteSessions*         │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -64,6 +66,11 @@
 | `ConversationStore` | domain 介面 | Session 的內容角色：依 session 讀寫訊息 | 已實作，目前只有 `InMemorySessionStore`；`delete` 計畫中 |
 | `SessionRegistry` | domain 介面 | Session 的生命週期角色：記住每個 owner 目前用哪個 session（見 D-034） | 已實作，目前只有 `InMemorySessionStore` |
 | `SessionManager` | use_cases | 管理 session 生命週期，是唯一同時處理兩個 session 角色的元件（見 D-034） | 已實作 `current_or_start`、`start_new`；`resume`、`clear`、列出 session 計畫中 |
+| HTTP API | entry adapters | 用 HTTP 提供 session 和 SSE 事件串流，只綁定 `127.0.0.1`（見 D-035） | 已實作 `POST /sessions`、`POST /sessions/{id}/messages` |
+| `wire` | adapters | HTTP 邊界的傳輸 DTO，以及和 `Event` 互相轉換的函式，服務端和客戶端共用（見 D-035） | 已實作 |
+| `SessionLifecycle` | domain 介面 | 入口取得和開新 session 的方式，讓 CLI 可以換成遠端版本（見 D-035） | 計畫中 |
+| `RemoteAgent` | adapters | 透過 HTTP API 實作 `Agent`，把 SSE 還原成 `Event` | 計畫中 |
+| `RemoteSessions` | adapters | 透過 HTTP API 實作 `SessionLifecycle` | 計畫中 |
 | `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
 | `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
 | `Message` | domain 資料 | 對話訊息 | 已實作，`ContentPart` 目前只有 `TextPart` |
@@ -86,6 +93,7 @@
 - 訊息只保存檔案參照，不保存檔案內容。
 - 入口不產生 session id，只提供 owner，透過 `SessionManager` 取得目前的 session。指令文字（例如 `/reset`）由入口解析。
 - `LoopAgent` 和 `ContextBuilder` 只認 `session_id`，不知道 owner 和 session 生命週期。
+- HTTP 邊界用 `wire` 的 DTO，不直接序列化 domain 的型別；`turn_completed` 和 `turn_failed` 只存在於傳輸層。
 - `ConversationStore` 和 `SessionRegistry` 是同一個 Session 概念的兩個角色，由同一個 adapter 實作；需要同時處理兩者的操作只放在 `SessionManager`。
 
 ## 現行訊息流程（`LoopAgent`）
@@ -122,4 +130,4 @@
 
 ## 執行方式
 
-`uv run python -m agent`。環境變數見 `agent/config.py`，`AGENT_DEBUG` 見 `agent/__main__.py`。`rss` agent 需要 Miniflux 設定才能啟動。
+`uv run python -m agent` 在同一個程序裡用終端機對話。`uv run python -m agent serve [--port 8000]` 在 `127.0.0.1` 啟動 HTTP API。環境變數見 `agent/config.py`，`AGENT_DEBUG` 見 `agent/__main__.py`。`rss` agent 需要 Miniflux 設定才能啟動。
