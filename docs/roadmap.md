@@ -30,6 +30,7 @@
 - [ ] 摘要 5 篇要 2 到 4 分鐘，原因還沒查
 - [ ] 同一個 category 有多個 feed 時，不保證各 feed 平均分到名額，例如中新網（見 D-027）
 - [ ] `miniflux_query_entries` 的顯示數假設前面的頁都看過，跳頁時會多算（見 D-029）
+- [ ] Session 回收只在開新 session 時觸發，過期的 session 不保證準時刪除（見 D-036）
 
 ## 路線
 
