@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from agent.adapters.in_memory_store import InMemoryConversationStore
+from agent.adapters.in_memory_store import InMemorySessionStore
 from agent.domain.agent_spec import AgentSpec
 from agent.domain.event import TextDelta, ToolLimitReached, ToolStarted
 from agent.domain.interfaces import Agent, LLMClient
@@ -24,7 +24,7 @@ def make_agent(
     max_tool_iterations: int = 5,
     tool_call_limits: dict[str, int] | None = None,
 ) -> LoopAgent:
-    store = store or InMemoryConversationStore()
+    store = store or InMemorySessionStore()
     tools = tools or []
     spec = AgentSpec(
         name="test",
@@ -393,7 +393,7 @@ def test_sessions_do_not_share_history():
 
 def test_system_prompt_is_sent_but_not_stored():
     llm_client = FakeLLMClient(replies=[["hi"]])
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     agent = make_agent(llm_client, store, system_prompt="Be terse.")
 
     list(agent.run(request("hello")))
@@ -415,7 +415,7 @@ def test_failed_turn_is_not_stored():
 def test_turn_that_fails_after_a_tool_call_is_not_stored():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], RuntimeError("connection lost")])
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     agent = make_agent(llm_client, store, tools=[FakeTool(name="lookup")])
 
     with pytest.raises(RuntimeError):
@@ -427,7 +427,7 @@ def test_turn_that_fails_after_a_tool_call_is_not_stored():
 def test_turn_that_ends_with_the_limit_notice_is_stored():
     tool_call = ToolCall(id="call_1", name="lookup", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], RuntimeError("tools required")])
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     agent = make_agent(llm_client, store, tools=[FakeTool(name="lookup")], max_tool_iterations=1)
 
     list(agent.run(request("do something")))
@@ -446,7 +446,7 @@ def test_only_tools_listed_in_the_spec_are_available():
     tool_call = ToolCall(id="call_1", name="secret", arguments={})
     llm_client = FakeLLMClient(replies=[[tool_call], ["done"]])
     lookup, secret = FakeTool(name="lookup"), FakeTool(name="secret")
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     spec = AgentSpec(name="test", tools=("lookup",))
     agent = LoopAgent(
         spec, llm_client, store, ContextBuilder(store), ToolRegistry([lookup, secret])
@@ -459,7 +459,7 @@ def test_only_tools_listed_in_the_spec_are_available():
 
 
 def test_unknown_tool_in_the_spec_fails_at_construction():
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     spec = AgentSpec(name="test", tools=("missing",))
 
     with pytest.raises(ValueError, match="missing"):

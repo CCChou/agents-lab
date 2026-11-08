@@ -298,3 +298,12 @@
 - 原因：模型規劃分配（見 D-032）前要知道篇數，但 `miniflux_list_categories` 只有未讀數，不受時間範圍影響，Miniflux 也沒有依時間範圍回傳各 category 篇數的 API。讀取狀態要和查詢條件一致，否則問未讀文章時會分配到不存在的篇數。
 - 考慮過但沒選：用 `limit` 1 的查詢探查總數，不用新工具，但模型會逐一探查，把查詢額度用完；讓 `miniflux_list_categories` 接受時間範圍，一次列出全部，category 多時請求數也跟著變多。
 - 重新評估的時機：Category 數量多到計數明顯變慢時，改成並行請求或快取。
+
+## D-034：Session 生命週期由 `SessionManager` 管理，`/reset` 開新 session
+
+- 日期：2026-11-06
+- 狀態：生效中
+- 決定：新增 `SessionRegistry` 介面，記住每個 owner 目前用哪個 session；新增 use case `SessionManager`，提供 `current_or_start` 和 `start_new`。`ConversationStore`（內容角色）和 `SessionRegistry`（生命週期角色）是同一個 Session 概念，介面依使用者分開，由同一個 adapter 實作，`InMemoryConversationStore` 因此改名為 `InMemorySessionStore`。入口不再自己決定 session id，只提供 owner（CLI 為 `cli`），並解析指令文字。`/reset` 開一個新的 session，舊的訊息保留，只是不再送給模型。需要同時處理兩個角色的操作（resume、clear、列出 session）以後都放在 `SessionManager`。
+- 原因：開新對話和刪除歷史是不同的操作，業界常見的做法也分開：LangGraph 換 `thread_id` 開新對話，用 `delete_thread` 刪除；Google ADK 由 SessionService 管理生命週期。以後的 resume、clear、持久化都會同時碰到 session 清單和訊息，放在同一個協調者和同一個 adapter，才能保持一致，也能用同一個 transaction。介面分開，`LoopAgent` 只看到 `load` 和 `append`，不需要知道 reset。LINE 這類 owner id 固定的入口可以重用同一個 `SessionManager`。
+- 考慮過但沒選：CLI 自己換 session id，改動最少，但生命週期散在各個入口，resume 和 clear 沒有位置；在 `ConversationStore` 加 `clear()`，把開新對話和刪除混在一起，也無法 resume；`Agent` 加 `reset()`，每種 agent 都要實作，違反單一職責；合併成一個 `SessionRepository` 大介面，`LoopAgent` 會依賴用不到的方法；在同一個 session 的紀錄裡寫入重置事件（Rasa 的 `Restarted`），讀取時要找最後一個重置點；另外加一層入口 use case 統一解析指令，目前只有 CLI 一個入口，太早。
+- 重新評估的時機：加入 LINE 等第二個入口時，把指令解析和協調移到共用的 use case；需要刪除歷史時，`ConversationStore` 加 `delete`，由 `SessionManager.clear` 呼叫；做 `/resume` 或列出 session 時，`SessionRegistry` 要記住 owner 的所有 session，不只目前的那一個。目前 CLI 直接依賴 `SessionManager` 類別；出現第二種 session 生命週期的實作，或入口測試需要模擬 `SessionManager` 時，在 domain 加 `SessionLifecycle` 輸入介面，和 `Agent` 的做法一致。

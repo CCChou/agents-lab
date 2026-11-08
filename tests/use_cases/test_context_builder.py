@@ -1,4 +1,4 @@
-from agent.adapters.in_memory_store import InMemoryConversationStore
+from agent.adapters.in_memory_store import InMemorySessionStore
 from agent.domain.agent_spec import AgentSpec
 from agent.domain.message import Message
 from agent.domain.tool import ToolCall
@@ -6,7 +6,7 @@ from agent.use_cases.context_builder import ContextBuilder
 
 
 def test_build_returns_stored_history():
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     history = [Message.from_text("user", "hi"), Message.from_text("assistant", "hello")]
     store.append("s1", history)
 
@@ -14,7 +14,7 @@ def test_build_returns_stored_history():
 
 
 def test_build_puts_the_system_prompt_first():
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     store.append("s1", [Message.from_text("user", "hi")])
     spec = AgentSpec(name="test", system_prompt="Be terse.")
 
@@ -25,7 +25,7 @@ def test_build_puts_the_system_prompt_first():
 
 
 def test_build_is_empty_for_a_new_session_without_system_prompt():
-    builder = ContextBuilder(InMemoryConversationStore())
+    builder = ContextBuilder(InMemorySessionStore())
 
     assert builder.build(AgentSpec(name="test"), "new") == []
 
@@ -41,14 +41,14 @@ def tool_turn(number: int) -> list[Message]:
 
 
 def test_build_keeps_tool_results_from_the_latest_turn():
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     store.append("s1", tool_turn(1))
 
     assert ContextBuilder(store).build(AgentSpec(name="test"), "s1") == tool_turn(1)
 
 
 def test_build_replaces_older_tool_results_and_says_how_to_get_them_back():
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     store.append("s1", [*tool_turn(1), *tool_turn(2)])
 
     context = ContextBuilder(store).build(AgentSpec(name="test"), "s1")
@@ -62,7 +62,7 @@ def test_build_replaces_older_tool_results_and_says_how_to_get_them_back():
 
 
 def test_build_keeps_everything_else_from_older_turns():
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     store.append("s1", [*tool_turn(1), *tool_turn(2)])
 
     context = ContextBuilder(store).build(AgentSpec(name="test"), "s1")
@@ -72,7 +72,7 @@ def test_build_keeps_everything_else_from_older_turns():
 
 
 def test_build_does_not_change_the_stored_history():
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     history = [*tool_turn(1), *tool_turn(2)]
     store.append("s1", history)
 

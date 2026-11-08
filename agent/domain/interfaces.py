@@ -30,5 +30,12 @@ class ConversationStore(Protocol):
 
 
 @runtime_checkable
+class SessionRegistry(Protocol):
+    def current(self, owner_id: str) -> str | None: ...
+
+    def set_current(self, owner_id: str, session_id: str) -> None: ...
+
+
+@runtime_checkable
 class ArticleReader(Protocol):
     def read(self, entry_id: int) -> Article: ...

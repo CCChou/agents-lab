@@ -8,16 +8,20 @@ from agent.domain.event import Event, TextDelta, ToolLimitReached, ToolStarted
 from agent.domain.interfaces import Agent
 from agent.domain.message import Message
 from agent.domain.request import AgentRequest
+from agent.use_cases.session_manager import SessionManager
 
 EXIT_COMMANDS = {"exit", "quit"}
+RESET_COMMANDS = {"/reset"}
 WELCOME_MESSAGE = (
     "Welcome! Type a message and press Enter to chat. Type 'exit' or 'quit' to leave.\n"
+    "Type '/reset' to start a new conversation.\n"
 )
+RESET_MESSAGE = "[已開始新對話]\n"
 GOODBYE_MESSAGE = "Goodbye!\n"
 ERROR_PREFIX = "Error: "
 TOOL_LIMIT_NOTICE = "\n[已達到工具呼叫上限，停止重試]\n"
 PROMPT = "> "
-SESSION_ID = "cli"
+OWNER_ID = "cli"
 
 
 class TextWriter(Protocol):
@@ -81,6 +85,7 @@ def _write_event(event: Event, writer: TextWriter, output: TextIO) -> None:
 
 def run(
     agent: Agent,
+    sessions: SessionManager,
     input_lines: Iterable[str],
     output: TextIO,
     *,
@@ -102,8 +107,13 @@ def run(
             continue
         if message in EXIT_COMMANDS:
             break
+        if message in RESET_COMMANDS:
+            sessions.start_new(OWNER_ID)
+            output.write(RESET_MESSAGE)
+            continue
         try:
-            request = AgentRequest(SESSION_ID, Message.from_text("user", message))
+            session_id = sessions.current_or_start(OWNER_ID)
+            request = AgentRequest(session_id, Message.from_text("user", message))
             for event in agent.run(request):
                 _write_event(event, writer, output)
                 output.flush()

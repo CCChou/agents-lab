@@ -10,7 +10,7 @@ from rich.console import Console
 
 from agent.adapters.cli import MarkdownBlockWriter, prompt_lines, run
 from agent.adapters.current_time import CurrentTimeTool
-from agent.adapters.in_memory_store import InMemoryConversationStore
+from agent.adapters.in_memory_store import InMemorySessionStore
 from agent.adapters.miniflux import (
     MinifluxArticleReader,
     MinifluxCountEntriesByCategoryTool,
@@ -26,6 +26,7 @@ from agent.domain.interfaces import LLMClient
 from agent.domain.tool import Tool
 from agent.use_cases.context_builder import ContextBuilder
 from agent.use_cases.loop_agent import LoopAgent
+from agent.use_cases.session_manager import SessionManager
 from agent.use_cases.summarize_entry import SummarizeEntryTool
 from agent.use_cases.tool_registry import ToolRegistry
 
@@ -72,13 +73,21 @@ def main() -> None:
         temperature=config.temperature,
     )
     tools = _build_tools(llm_client)
-    store = InMemoryConversationStore()
+    store = InMemorySessionStore()
     agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
+    sessions = SessionManager(store)
     if sys.stdin.isatty() and sys.stdout.isatty():
         lines = prompt_lines(PromptSession().prompt)
-        run(agent, lines, sys.stdout, prompt="", text_writer=MarkdownBlockWriter(Console()))
+        run(
+            agent,
+            sessions,
+            lines,
+            sys.stdout,
+            prompt="",
+            text_writer=MarkdownBlockWriter(Console()),
+        )
     else:
-        run(agent, _stdin_lines(), sys.stdout)
+        run(agent, sessions, _stdin_lines(), sys.stdout)
 
 
 if __name__ == "__main__":

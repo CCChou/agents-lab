@@ -5,6 +5,7 @@
 ## 目前能力
 
 - 終端機多輪對話，對話記憶只存在記憶體
+- 輸入 `/reset` 開始新對話，舊對話保留但不再送給模型（見 D-034）
 - 支援任何 OpenAI 相容的 Chat Completions API，可選填 `reasoning_effort`（見 D-023）
 - 工具呼叫迴圈
 - 用 Miniflux 工具查詢 RSS 文章的標題、feed、category、已讀狀態、發布時間和網址，由新到舊排序

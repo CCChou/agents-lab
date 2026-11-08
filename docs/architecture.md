@@ -17,9 +17,12 @@
 ┌─ entry adapters ──────────────────────────────────────┐
 │  CLI              LINE*              Scheduler*       │
 └──────────┬────────────────────────────────▲───────────┘
+           │ owner_id → session_id          │
            │ AgentRequest                   │ Event
            ▼                                │
 ┌─ use_cases ───────────────────────────────┴───────────┐
+│  Session lifecycle:                                   │
+│    SessionManager                                     │
 │  Agent implementations:                               │
 │    LoopAgent(spec)        DigestAgent*                │
 │  Shared by LoopAgent:                                 │
@@ -31,15 +34,15 @@
                             ▼
 ┌─ domain ──────────────────────────────────────────────┐
 │  Ports: Agent  LLMClient  Tool  Policy*               │
-│         ConversationStore  MemoryStore*  BlobStore*   │
-│         ArticleReader                                 │
+│         ConversationStore  SessionRegistry            │
+│         MemoryStore*  BlobStore*  ArticleReader       │
 │  Data:  AgentSpec  AgentRequest  Event                │
 │         Message  ContentPart  ToolCall  Article       │
 └───────────────────────────▲───────────────────────────┘
                             │ implements
 ┌─ infrastructure adapters ─┴───────────────────────────┐
 │  OpenAICompatibleLLMClient    MinifluxQueryTool       │
-│  InMemoryConversationStore    MinifluxGetEntryTool    │
+│  InMemorySessionStore         MinifluxGetEntryTool    │
 │  CurrentTimeTool              FetchPageTool           │
 │  MinifluxArticleReader        SqliteStores*           │
 │  MinifluxListCategoriesTool                           │
@@ -58,7 +61,9 @@
 | `Event` | domain 資料 | 統一的輸出格式 | 已實作：`TextDelta`、`ToolStarted`、`ToolLimitReached` |
 | `ContextBuilder` | use_cases | 組合指令、記憶和對話，並修剪 context | 已實作，目前組合指令和對話，並清除舊的工具結果 |
 | `ToolRegistry` | use_cases | 依名稱找到工具，名稱不存在時在啟動就報錯 | 已實作 |
-| `ConversationStore` | domain 介面 | 短期記憶，依 session 讀寫 | 已實作，目前只有 `InMemoryConversationStore` |
+| `ConversationStore` | domain 介面 | Session 的內容角色：依 session 讀寫訊息 | 已實作，目前只有 `InMemorySessionStore`；`delete` 計畫中 |
+| `SessionRegistry` | domain 介面 | Session 的生命週期角色：記住每個 owner 目前用哪個 session（見 D-034） | 已實作，目前只有 `InMemorySessionStore` |
+| `SessionManager` | use_cases | 管理 session 生命週期，是唯一同時處理兩個 session 角色的元件（見 D-034） | 已實作 `current_or_start`、`start_new`；`resume`、`clear`、列出 session 計畫中 |
 | `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
 | `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
 | `Message` | domain 資料 | 對話訊息 | 已實作，`ContentPart` 目前只有 `TextPart` |
@@ -79,10 +84,13 @@
 - 組裝層依 `AgentSpec` 指定的模型建立 `LLMClient`；`model` 為 `None` 時使用環境變數的預設模型。
 - `LoopAgent` 只能使用 `AgentSpec` 列出的工具，即使 registry 裡有其他工具。
 - 訊息只保存檔案參照，不保存檔案內容。
+- 入口不產生 session id，只提供 owner，透過 `SessionManager` 取得目前的 session。指令文字（例如 `/reset`）由入口解析。
+- `LoopAgent` 和 `ContextBuilder` 只認 `session_id`，不知道 owner 和 session 生命週期。
+- `ConversationStore` 和 `SessionRegistry` 是同一個 Session 概念的兩個角色，由同一個 adapter 實作；需要同時處理兩者的操作只放在 `SessionManager`。
 
 ## 現行訊息流程（`LoopAgent`）
 
-1. `cli.run` 讀取輸入，呼叫 `Agent.run()`。輸入來源和文字輸出方式由組裝層決定（見 D-026）。
+1. `cli.run` 讀取輸入，向 `SessionManager` 取得 owner `cli` 目前的 session，再呼叫 `Agent.run()`。輸入 `/reset` 時改成開新的 session，不呼叫 agent（見 D-034）。輸入來源和文字輸出方式由組裝層決定（見 D-026）。
 2. `LoopAgent` 透過 `ContextBuilder` 取得 system prompt 和歷史，加上新訊息，連同 `AgentSpec` 列出的工具送給 `LLMClient.stream()`。
 3. LLM 的文字以 `TextDelta` 即時輸出。沒有工具呼叫時，結束這一輪。
 4. LLM 要求呼叫工具時，`LoopAgent` 輸出 `ToolStarted` 並執行工具，把結果加入這一輪的訊息，再回到第 2 步。超過 `AgentSpec.tool_call_limits` 的呼叫不執行，改回傳未執行的結果（見 D-025）。
