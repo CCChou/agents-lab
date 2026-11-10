@@ -65,3 +65,11 @@ def test_get_rejects_an_invalid_job(tmp_path, body):
 
     with pytest.raises(ValueError):
         source.get("a")
+
+
+def test_a_config_file_without_jobs_has_no_job(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[llm]\nmodel = "m"\n', encoding="utf-8")
+
+    with pytest.raises(UnknownJobError, match="not defined"):
+        TomlJobSource(path).get("daily-digest")

@@ -79,7 +79,7 @@
 | `RunJob` | use_cases | 執行排程任務：以 owner `job:{name}` 開 session、呼叫 `Agent`、把回答交給每個通道，失敗時送錯誤通知（見 D-037） | 已實作 |
 | `Job`、`Notification` | domain 資料 | 任務定義（`name`、`prompt`、`channels`）和要送出的通知（`title`、`markdown`、`session_id`） | 已實作 |
 | `Notifier` | domain 介面 | 把一份通知送到一個通道 | 已實作，目前只有 `SlackWebhookNotifier`（在 adapter 裡轉成 mrkdwn） |
-| `JobSource` | domain 介面 | 依名稱取得任務定義 | 已實作，目前只有 `TomlJobSource`，每次都重新讀取 `jobs.toml` |
+| `JobSource` | domain 介面 | 依名稱取得任務定義 | 已實作，目前只有 `TomlJobSource`，每次都重新讀取設定檔的 `[jobs]`（見 D-038） |
 | `LLMClient` | domain 介面 | 呼叫模型，隱藏供應商差異 | 已實作 |
 | `Tool` | domain 介面 | 定義工具 | 已實作，`run()` 目前回傳字串 |
 | `Message` | domain 資料 | 對話訊息 | 已實作，`ContentPart` 目前只有 `TextPart` |
@@ -97,7 +97,7 @@
 - 入口只透過 `Agent` 介面溝通，不知道背後是哪種實作。
 - 由 LLM 決定流程的 agent 使用 `AgentSpec` + `LoopAgent`；由程式決定流程的 workflow 自行實作 `Agent`。
 - `LoopAgent` 不知道模型或工具的具體實作，一律透過介面使用。
-- 組裝層依 `AgentSpec` 指定的模型建立 `LLMClient`；`model` 為 `None` 時使用環境變數的預設模型。
+- 組裝層依 `AgentSpec` 指定的模型建立 `LLMClient`；`model` 為 `None` 時使用設定檔的預設模型（`llm.model`）。
 - `LoopAgent` 只能使用 `AgentSpec` 列出的工具，即使 registry 裡有其他工具。
 - 訊息只保存檔案參照，不保存檔案內容。
 - 入口不產生 session id，只提供 owner，透過 `SessionManager` 取得目前的 session。指令文字（例如 `/reset`）由入口解析。
@@ -140,4 +140,4 @@
 
 ## 執行方式
 
-安裝、環境變數、終端機對話和 HTTP API 的用法見 `README.md`。
+安裝、設定檔、終端機對話和 HTTP API 的用法見 `README.md`。

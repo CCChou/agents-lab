@@ -1,184 +1,162 @@
+from pathlib import Path
+
 import pytest
 
-from agent.config import LLMConfig, MinifluxConfig
+from agent.config import ConfigError, load_config, resolve_config_path
+
+MINIMAL = """
+[llm]
+base_url = "https://api.openai.com/v1"
+model = "gpt-6-luna"
+
+[miniflux]
+base_url = "https://miniflux.example.test"
+"""
+
+SECRETS = {"AGENT_LLM_API_KEY": "llm-key", "MINIFLUX_API_KEY": "miniflux-key"}
 
 
-def test_from_env_reads_all_three_values(monkeypatch):
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "deepseek/deepseek-chat-v3.1:free")
-
-    config = LLMConfig.from_env()
-
-    assert config.base_url == "https://openrouter.ai/api/v1"
-    assert config.api_key == "test-key"
-    assert config.model == "deepseek/deepseek-chat-v3.1:free"
+def _write(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
-def test_from_env_raises_when_a_variable_is_missing(monkeypatch):
-    monkeypatch.delenv("AGENT_LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("AGENT_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("AGENT_LLM_MODEL", raising=False)
+def test_load_config_reads_settings_from_the_file_and_secrets_from_env(tmp_path):
+    path = _write(tmp_path, MINIMAL)
 
-    with pytest.raises(KeyError):
-        LLMConfig.from_env()
+    config = load_config(path, SECRETS)
 
-
-def test_from_env_reads_optional_system_prompt(monkeypatch):
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "deepseek/deepseek-chat-v3.1:free")
-    monkeypatch.setenv("AGENT_SYSTEM_PROMPT", "You are a helpful assistant.")
-
-    config = LLMConfig.from_env()
-
-    assert config.system_prompt == "You are a helpful assistant."
+    assert config.path == path
+    assert config.llm.base_url == "https://api.openai.com/v1"
+    assert config.llm.model == "gpt-6-luna"
+    assert config.llm.api_key == "llm-key"
+    assert config.miniflux.base_url == "https://miniflux.example.test"
+    assert config.miniflux.api_key == "miniflux-key"
 
 
-def test_from_env_defaults_system_prompt_to_none_when_unset(monkeypatch):
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "deepseek/deepseek-chat-v3.1:free")
-    monkeypatch.delenv("AGENT_SYSTEM_PROMPT", raising=False)
+def test_load_config_defaults_optional_settings(tmp_path):
+    config = load_config(_write(tmp_path, MINIMAL), SECRETS)
 
-    config = LLMConfig.from_env()
-
-    assert config.system_prompt is None
-
-
-def test_from_env_reads_optional_reasoning_effort(monkeypatch):
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.openai.com/v1")
-    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "gpt-6-luna")
-    monkeypatch.setenv("AGENT_LLM_REASONING_EFFORT", "none")
-
-    config = LLMConfig.from_env()
-
-    assert config.reasoning_effort == "none"
+    assert config.debug is False
+    assert config.slack_webhook_url is None
+    assert config.llm.system_prompt is None
+    assert config.llm.reasoning_effort is None
+    assert config.llm.temperature is None
+    assert config.miniflux.ca_bundle_path is None
+    assert config.miniflux.verify_ssl is True
+    assert config.miniflux.tls_verify is True
 
 
-def test_from_env_defaults_reasoning_effort_to_none_when_unset(monkeypatch):
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "deepseek/deepseek-chat-v3.1:free")
-    monkeypatch.delenv("AGENT_LLM_REASONING_EFFORT", raising=False)
+def test_load_config_reads_optional_settings(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+debug = true
 
-    config = LLMConfig.from_env()
+[llm]
+base_url = "https://api.groq.com/openai/v1"
+model = "qwen/qwen3.8-27b"
+system_prompt = "You are a helpful assistant."
+reasoning_effort = "none"
+temperature = 0.1
 
-    assert config.reasoning_effort is None
+[miniflux]
+base_url = "https://miniflux.example.test"
+ca_bundle = "/etc/ssl/miniflux-ca.pem"
+""",
+    )
 
+    config = load_config(path, SECRETS | {"SLACK_WEBHOOK_URL": "https://hooks.slack.test/x"})
 
-def test_from_env_reads_optional_temperature(monkeypatch):
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.groq.com/openai/v1")
-    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "qwen/qwen3.8-27b")
-    monkeypatch.setenv("AGENT_LLM_TEMPERATURE", "0.1")
-
-    config = LLMConfig.from_env()
-
-    assert config.temperature == 0.1
-
-
-def test_from_env_defaults_temperature_to_none_when_unset(monkeypatch):
-    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.groq.com/openai/v1")
-    monkeypatch.setenv("AGENT_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("AGENT_LLM_MODEL", "qwen/qwen3.8-27b")
-    monkeypatch.delenv("AGENT_LLM_TEMPERATURE", raising=False)
-
-    config = LLMConfig.from_env()
-
-    assert config.temperature is None
+    assert config.debug is True
+    assert config.slack_webhook_url == "https://hooks.slack.test/x"
+    assert config.llm.system_prompt == "You are a helpful assistant."
+    assert config.llm.reasoning_effort == "none"
+    assert config.llm.temperature == 0.1
+    assert config.miniflux.ca_bundle_path == "/etc/ssl/miniflux-ca.pem"
+    assert config.miniflux.tls_verify == "/etc/ssl/miniflux-ca.pem"
 
 
-def test_miniflux_config_from_env_reads_both_values(monkeypatch):
-    monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
-    monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
+def test_load_config_accepts_an_integer_temperature(tmp_path):
+    path = _write(tmp_path, MINIMAL.replace('model = "gpt-6-luna"', 'model = "m"\ntemperature = 1'))
 
-    config = MinifluxConfig.from_env()
+    config = load_config(path, SECRETS)
 
-    assert config.base_url == "https://miniflux.example.test"
-    assert config.api_key == "test-token"
-
-
-def test_miniflux_config_from_env_raises_when_a_variable_is_missing(monkeypatch):
-    monkeypatch.delenv("MINIFLUX_BASE_URL", raising=False)
-    monkeypatch.delenv("MINIFLUX_API_KEY", raising=False)
-
-    with pytest.raises(KeyError):
-        MinifluxConfig.from_env()
+    assert config.llm.temperature == 1.0
+    assert isinstance(config.llm.temperature, float)
 
 
-def test_miniflux_config_defaults_to_verified_tls_with_no_ca_bundle(monkeypatch):
-    monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
-    monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
-    monkeypatch.delenv("MINIFLUX_CA_BUNDLE", raising=False)
-    monkeypatch.delenv("MINIFLUX_VERIFY_SSL", raising=False)
+def test_load_config_treats_an_empty_slack_webhook_as_unset(tmp_path):
+    config = load_config(_write(tmp_path, MINIMAL), SECRETS | {"SLACK_WEBHOOK_URL": ""})
 
-    config = MinifluxConfig.from_env()
-
-    assert config.ca_bundle_path is None
-    assert config.verify_ssl is True
-    assert config.tls_verify is True
-
-
-def test_miniflux_config_reads_ca_bundle_path_and_uses_it_for_tls_verify(monkeypatch):
-    monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
-    monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
-    monkeypatch.setenv("MINIFLUX_CA_BUNDLE", "/etc/ssl/miniflux-ca.pem")
-    monkeypatch.delenv("MINIFLUX_VERIFY_SSL", raising=False)
-
-    config = MinifluxConfig.from_env()
-
-    assert config.ca_bundle_path == "/etc/ssl/miniflux-ca.pem"
-    assert config.tls_verify == "/etc/ssl/miniflux-ca.pem"
-
-
-@pytest.mark.parametrize("value", ["false", "False", "0", "no", "NO"])
-def test_miniflux_config_verify_ssl_false_disables_tls_verification(monkeypatch, value):
-    monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
-    monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
-    monkeypatch.setenv("MINIFLUX_VERIFY_SSL", value)
-
-    config = MinifluxConfig.from_env()
-
-    assert config.verify_ssl is False
-    assert config.tls_verify is False
-
-
-def test_miniflux_config_verify_ssl_false_overrides_ca_bundle_path(monkeypatch):
-    monkeypatch.setenv("MINIFLUX_BASE_URL", "https://miniflux.example.test")
-    monkeypatch.setenv("MINIFLUX_API_KEY", "test-token")
-    monkeypatch.setenv("MINIFLUX_VERIFY_SSL", "false")
-    monkeypatch.setenv("MINIFLUX_CA_BUNDLE", "/etc/ssl/miniflux-ca.pem")
-
-    config = MinifluxConfig.from_env()
-
-    assert config.tls_verify is False
-
-
-def test_jobs_config_defaults_to_jobs_toml_and_no_slack(monkeypatch):
-    from pathlib import Path
-
-    from agent.config import JobsConfig
-
-    monkeypatch.delenv("AGENT_JOBS_FILE", raising=False)
-    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
-
-    config = JobsConfig.from_env()
-
-    assert config.jobs_file == Path("jobs.toml")
     assert config.slack_webhook_url is None
 
 
-def test_jobs_config_reads_the_file_and_webhook(monkeypatch):
-    from pathlib import Path
+def test_verify_ssl_false_disables_tls_verification_even_with_a_ca_bundle(tmp_path):
+    path = _write(
+        tmp_path,
+        MINIMAL + 'verify_ssl = false\nca_bundle = "/etc/ssl/miniflux-ca.pem"\n',
+    )
 
-    from agent.config import JobsConfig
+    config = load_config(path, SECRETS)
 
-    monkeypatch.setenv("AGENT_JOBS_FILE", "/etc/agent/jobs.toml")
-    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.test/x")
+    assert config.miniflux.verify_ssl is False
+    assert config.miniflux.tls_verify is False
 
-    config = JobsConfig.from_env()
 
-    assert config.jobs_file == Path("/etc/agent/jobs.toml")
-    assert config.slack_webhook_url == "https://hooks.slack.test/x"
+@pytest.mark.parametrize(
+    ("text", "field"),
+    [
+        (MINIMAL.replace('base_url = "https://api.openai.com/v1"\n', ""), "llm.base_url"),
+        (MINIMAL.replace('model = "gpt-6-luna"', "model = 1"), "llm.model"),
+        (
+            MINIMAL.replace('model = "gpt-6-luna"', 'model = "m"\ntemperature = "hot"'),
+            "llm.temperature",
+        ),
+        (MINIMAL.replace("[miniflux]", "[other]"), "miniflux.base_url"),
+        (MINIMAL + 'verify_ssl = "false"\n', "miniflux.verify_ssl"),
+        ('debug = "yes"\n' + MINIMAL, "debug"),
+    ],
+)
+def test_load_config_names_the_field_that_is_missing_or_has_the_wrong_type(tmp_path, text, field):
+    with pytest.raises(ConfigError, match=field):
+        load_config(_write(tmp_path, text), SECRETS)
+
+
+@pytest.mark.parametrize("name", ["AGENT_LLM_API_KEY", "MINIFLUX_API_KEY"])
+def test_load_config_requires_each_secret_in_env(tmp_path, name):
+    env = {key: value for key, value in SECRETS.items() if key != name}
+
+    with pytest.raises(ConfigError, match=name):
+        load_config(_write(tmp_path, MINIMAL), env)
+
+
+def test_load_config_reports_a_missing_file(tmp_path):
+    path = tmp_path / "missing.toml"
+
+    with pytest.raises(ConfigError, match="missing.toml"):
+        load_config(path, SECRETS)
+
+
+def test_load_config_reports_invalid_toml(tmp_path):
+    with pytest.raises(ConfigError, match="config.toml"):
+        load_config(_write(tmp_path, "[llm\n"), SECRETS)
+
+
+def test_resolve_config_path_prefers_the_argument_over_env():
+    path = resolve_config_path("/srv/a.toml", {"AGENT_CONFIG": "/etc/agent/config.toml"})
+
+    assert path == Path("/srv/a.toml")
+
+
+def test_resolve_config_path_falls_back_to_agent_config():
+    path = resolve_config_path(None, {"AGENT_CONFIG": "/etc/agent/config.toml"})
+
+    assert path == Path("/etc/agent/config.toml")
+
+
+@pytest.mark.parametrize("env", [{}, {"AGENT_CONFIG": ""}])
+def test_resolve_config_path_requires_one_of_them(env):
+    with pytest.raises(ConfigError, match="--config"):
+        resolve_config_path(None, env)

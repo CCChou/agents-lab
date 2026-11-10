@@ -3,15 +3,83 @@
 一個可以對話的 RSS 分析 agent，讀取 Miniflux 的文章，回答趨勢、摘要和推薦的問題。
 架構和設計決策見 `docs/`。
 
-## 安裝
+## 快速開始
 
 ```bash
 uv sync
+cp config.example.toml config.toml   # 填入 LLM 和 Miniflux 的網址、模型
+$EDITOR prod.env                     # 填入密鑰，見「密鑰」
+source prod.env
+uv run python -m agent --config config.toml
 ```
 
 ## 設定
 
-把環境變數寫成 `export VAR=...`，放在 `*.env` 檔案裡（例如 `prod.env`、`test.env`，已被 `.gitignore` 忽略），執行前先載入：
+設定分成兩個地方（見 D-038）：
+
+- **設定檔** `config.toml`：網址、模型、任務等一般設定
+- **環境變數**：只放密鑰
+
+一個設定只會從其中一個地方讀取，環境變數不能覆蓋設定檔的值。`config.toml` 和 `*.env` 都已被 `.gitignore` 忽略，每台機器各自保存一份。
+
+### 指定設定檔
+
+依下列順序找設定檔，兩個都沒有就無法啟動。程式不會在啟動目錄或其他固定位置裡找。
+
+1. `--config <路徑>`
+2. 環境變數 `AGENT_CONFIG`
+
+```bash
+uv run python -m agent --config config.toml
+uv run python -m agent serve --config /opt/agents-lab/config.toml
+
+export AGENT_CONFIG=/opt/agents-lab/config.toml   # 之後就不用每次加 --config
+uv run python -m agent serve
+```
+
+`--config` 寫在 `serve` 前面或後面都可以。`chat`（連到服務的客戶端）不需要設定檔。
+
+### 設定檔
+
+完整範例見 `config.example.toml`：
+
+```toml
+# debug = true
+
+[llm]
+base_url = "https://api.openai.com/v1"
+model = "gpt-6-luna"
+reasoning_effort = "none"
+
+[miniflux]
+base_url = "https://miniflux.example.com"
+# ca_bundle = "/etc/ssl/miniflux-ca.pem"
+# verify_ssl = false
+
+[jobs.daily-digest]
+prompt = "過去 24 小時的科技和新聞趨勢，各推薦最多 5 篇值得讀的文章"
+channels = ["slack"]
+```
+
+| 欄位 | 型別 | 必填 | 說明 |
+| --- | --- | --- | --- |
+| `debug` | 布林 | | `true` 時輸出 debug 記錄，預設 `false` |
+| `llm.base_url` | 字串 | ✅ | OpenAI 相容 API 的網址 |
+| `llm.model` | 字串 | ✅ | 模型名稱 |
+| `llm.reasoning_effort` | 字串 | | 推理強度，有設定時才送出（見 D-023） |
+| `llm.temperature` | 數字 | | 溫度，有設定時才送出 |
+| `llm.system_prompt` | 字串 | | 取代 `rss` 的預設指令 |
+| `miniflux.base_url` | 字串 | ✅ | Miniflux 的網址 |
+| `miniflux.ca_bundle` | 字串 | | 自訂 CA 憑證的路徑 |
+| `miniflux.verify_ssl` | 布林 | | `false` 時不檢查憑證，`ca_bundle` 也不會使用，預設 `true` |
+| `jobs.<名稱>.prompt` | 字串 | 任務必填 | 送給 agent 的問題 |
+| `jobs.<名稱>.channels` | 字串列表 | 任務必填 | 結果送到哪些通道，目前只有 `"slack"` |
+
+布林值要寫成 `true`、`false`，不能加引號；`verify_ssl = "false"` 會被當成錯誤。`[jobs]` 可以完全不寫，見「排程任務與通知」。
+
+### 密鑰
+
+寫成 `export VAR=...`，放在 `*.env` 檔案裡（例如 `prod.env`），執行前先載入：
 
 ```bash
 source prod.env
@@ -19,24 +87,55 @@ source prod.env
 
 | 環境變數 | 必填 | 說明 |
 | --- | --- | --- |
-| `AGENT_LLM_BASE_URL` | ✅ | OpenAI 相容 API 的網址 |
-| `AGENT_LLM_API_KEY` | ✅ | API 金鑰 |
-| `AGENT_LLM_MODEL` | ✅ | 模型名稱 |
-| `AGENT_LLM_TEMPERATURE` | | 溫度 |
-| `AGENT_LLM_REASONING_EFFORT` | | 推理強度（見 D-023） |
-| `AGENT_SYSTEM_PROMPT` | | 覆蓋 `rss` 的預設指令 |
-| `MINIFLUX_BASE_URL` | ✅ | Miniflux 的網址 |
+| `AGENT_LLM_API_KEY` | ✅ | LLM 服務的 API 金鑰 |
 | `MINIFLUX_API_KEY` | ✅ | Miniflux 的 API 金鑰 |
-| `MINIFLUX_CA_BUNDLE` | | 自訂 CA 憑證的路徑 |
-| `MINIFLUX_VERIFY_SSL` | | 設成 `false` 可以關閉憑證檢查，預設是 `true` |
-| `AGENT_DEBUG` | | 有設定時輸出 debug 記錄 |
-| `AGENT_JOBS_FILE` | | 排程任務的定義檔，預設是啟動目錄下的 `jobs.toml`；部署時用絕對路徑 |
 | `SLACK_WEBHOOK_URL` | | Slack incoming webhook 的網址，沒有設定時不能使用 `slack` 通道 |
+| `AGENT_CONFIG` | | 設定檔的路徑，`--config` 優先 |
+
+### 什麼時候生效
+
+| 修改 | 生效時機 |
+| --- | --- |
+| `[jobs]` | 下一次執行任務時，不用重啟 |
+| 其他設定、密鑰 | 重啟服務後 |
+
+### 設定錯誤
+
+啟動時就會檢查設定和密鑰，有錯時印出訊息後結束，不會等到第一次使用才失敗：
+
+```text
+config error: no config file: pass --config <path> or set AGENT_CONFIG
+config error: /opt/agents-lab/config.toml does not exist
+config error: llm.model is required
+config error: miniflux.verify_ssl must be true or false: 'false'
+config error: AGENT_LLM_API_KEY must be set in the environment
+```
+
+`[jobs]` 不在啟動時檢查，任務寫錯時在觸發那次才會報錯。
+
+### 從舊的環境變數換過來
+
+2026-11-10 以前的設定都放在環境變數裡，現在已經不再讀取。搬到設定檔的對照：
+
+| 舊的環境變數 | 設定檔 |
+| --- | --- |
+| `AGENT_LLM_BASE_URL` | `llm.base_url` |
+| `AGENT_LLM_MODEL` | `llm.model` |
+| `AGENT_LLM_REASONING_EFFORT` | `llm.reasoning_effort` |
+| `AGENT_LLM_TEMPERATURE` | `llm.temperature`（改成數字，不加引號） |
+| `AGENT_SYSTEM_PROMPT` | `llm.system_prompt` |
+| `MINIFLUX_BASE_URL` | `miniflux.base_url` |
+| `MINIFLUX_CA_BUNDLE` | `miniflux.ca_bundle` |
+| `MINIFLUX_VERIFY_SSL` | `miniflux.verify_ssl`（改成 `true` 或 `false`） |
+| `AGENT_DEBUG` | `debug = true` |
+| `AGENT_JOBS_FILE` 指向的 `jobs.toml` | 裡面的 `[jobs.*]` 直接搬進設定檔 |
+
+搬完後，`prod.env` 只需要留下「密鑰」那一節列出的變數，留著舊的也不會報錯。
 
 ## 在終端機對話
 
 ```bash
-uv run python -m agent
+uv run python -m agent --config config.toml
 ```
 
 | 輸入 | 作用 |
@@ -46,22 +145,25 @@ uv run python -m agent
 
 ## 透過服務對話
 
-先啟動服務，再用終端機連過去。這個模式不需要 LLM 和 Miniflux 的環境變數，設定都在服務那一邊。
+先啟動服務，再用終端機連過去。`chat` 不需要設定檔和密鑰，設定都在服務那一邊。
 
 ```bash
-uv run python -m agent serve                                  # 終端機 1
-uv run python -m agent chat                                   # 終端機 2，預設連到 http://127.0.0.1:8000
+uv run python -m agent serve --config config.toml   # 終端機 1
+uv run python -m agent chat                         # 終端機 2，預設連到 http://127.0.0.1:8000
 uv run python -m agent chat --server http://127.0.0.1:9000
 ```
 
-指令和 `python -m agent` 相同。服務沒有啟動時，每則訊息都會顯示連線錯誤，CLI 不會結束。
+指令和在同一個程序裡對話時相同。服務沒有啟動時，每則訊息都會顯示連線錯誤，CLI 不會結束。
 
 ## HTTP API
 
 ```bash
-uv run python -m agent serve            # 預設 port 8000，只監聽 127.0.0.1（見 D-035）
-uv run python -m agent serve --port 9000
+uv run python -m agent serve --config config.toml                 # 預設監聽 127.0.0.1:8000
+uv run python -m agent serve --config config.toml --port 9000
+uv run python -m agent serve --config config.toml --host 0.0.0.0  # 例如在 container 裡
 ```
+
+監聽的位址和 port 只能用參數指定，不放在設定檔裡。服務沒有驗證：預設只監聽 `127.0.0.1`，用 `--host` 開放到其他位址時，只能在內網使用（見 D-035）。
 
 ### `POST /sessions`
 
@@ -99,13 +201,7 @@ curl -N -X POST "localhost:8000/sessions/$sid/messages" \
 
 ## 排程任務與通知
 
-任務定義在 `jobs.toml`（已被 `.gitignore` 忽略），從範例複製一份來改：
-
-```bash
-cp jobs.example.toml jobs.toml
-```
-
-每個任務是一個 `[jobs.<名稱>]` 區塊，名稱就是觸發時 URL 裡的 `{name}`：
+任務寫在設定檔裡，每個任務是一個 `[jobs.<名稱>]` 區塊，名稱就是觸發時 URL 裡的 `{name}`，欄位見「設定檔」：
 
 ```toml
 [jobs.daily-digest]
@@ -117,13 +213,7 @@ prompt = "過去 7 天 AI 相關的重要發展，推薦最多 5 篇"
 channels = ["slack"]
 ```
 
-預設路徑是相對於啟動服務的目錄，在其他目錄啟動會找不到檔案。部署時在 `prod.env` 用絕對路徑指定：
-
-```bash
-export AGENT_JOBS_FILE=/opt/agents-lab/jobs.toml
-```
-
-`jobs.toml` 每次執行都會重新讀取，修改後不用重啟服務。服務啟動後，用 HTTP 觸發一個任務：
+任務是選用的。設定檔沒有 `[jobs]` 時，`/jobs/{name}/run` 一樣存在，觸發時回傳 `404`。修改任務不用重啟服務，服務啟動後用 HTTP 觸發一個任務：
 
 ```bash
 curl -fsS -X POST localhost:8000/jobs/daily-digest/run
@@ -135,8 +225,10 @@ curl -fsS -X POST localhost:8000/jobs/daily-digest/run
 | --- | --- |
 | `200` | 已送出，回傳 `session_id` |
 | `502` | agent 失敗，錯誤通知已送出 |
-| `500` | 通知送不出去，或任務用了沒有設定的通道 |
-| `404` | 找不到這個任務 |
+| `500` | 通知送不出去、任務用了沒有設定的通道，或任務的欄位寫錯 |
+| `404` | 設定檔裡沒有這個任務 |
+
+服務本身不負責排程，定時觸發交給外部的排程器，例如下面的 systemd timer 或 cron。
 
 ## 部署（systemd）
 
@@ -144,7 +236,7 @@ curl -fsS -X POST localhost:8000/jobs/daily-digest/run
 
 | 檔案 | 作用 |
 | --- | --- |
-| `agent.service` | 常駐執行 `python -m agent serve`，先 `source prod.env` 再啟動 |
+| `agent.service` | 常駐執行 `python -m agent serve`，先 `source prod.env` 載入密鑰，再用 `--config /opt/agents-lab/config.toml` 啟動 |
 | `agent-job@.service` | 所有任務共用的範本：`agent-job@<名稱>.service` 用 `curl` 呼叫一次 `POST /jobs/<名稱>/run`，失敗時結束代碼不是 0 |
 | `agent-job@daily-digest.timer` | 每天 08:00（機器的時區）觸發 `daily-digest`，錯過時會在開機後補跑 |
 
@@ -155,7 +247,7 @@ systemctl list-timers 'agent-job@*'
 journalctl -u agent.service -u 'agent-job@*'
 ```
 
-新增任務時，service 不用改，只要複製一份 timer，把 `@` 後面換成 `jobs.toml` 裡的名稱，再修改 `OnCalendar=`：
+timer 的名稱要和設定檔裡的任務名稱一致。新增任務時，service 不用改，只要複製一份 timer，把 `@` 後面換成任務名稱，再修改 `OnCalendar=`：
 
 ```bash
 sudo cp /etc/systemd/system/agent-job@daily-digest.timer /etc/systemd/system/agent-job@weekly-ai.timer
@@ -169,3 +261,5 @@ sudo systemctl enable --now agent-job@weekly-ai.timer
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
+
+測試不需要設定檔和密鑰。

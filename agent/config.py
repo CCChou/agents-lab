@@ -1,6 +1,16 @@
-import os
+"""Settings come from one TOML file; only secrets come from env (D-038)."""
+
+import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+CONFIG_ENV = "AGENT_CONFIG"
+
+
+class ConfigError(ValueError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -12,21 +22,6 @@ class LLMConfig:
     reasoning_effort: str | None = None
     temperature: float | None = None
 
-    @classmethod
-    def from_env(cls) -> "LLMConfig":
-        temperature = os.environ.get("AGENT_LLM_TEMPERATURE")
-        return cls(
-            base_url=os.environ["AGENT_LLM_BASE_URL"],
-            api_key=os.environ["AGENT_LLM_API_KEY"],
-            model=os.environ["AGENT_LLM_MODEL"],
-            system_prompt=os.environ.get("AGENT_SYSTEM_PROMPT"),
-            reasoning_effort=os.environ.get("AGENT_LLM_REASONING_EFFORT"),
-            temperature=float(temperature) if temperature else None,
-        )
-
-
-_FALSY_VALUES = {"false", "0", "no"}
-
 
 @dataclass(frozen=True)
 class MinifluxConfig:
@@ -34,15 +29,6 @@ class MinifluxConfig:
     api_key: str
     ca_bundle_path: str | None = None
     verify_ssl: bool = True
-
-    @classmethod
-    def from_env(cls) -> "MinifluxConfig":
-        return cls(
-            base_url=os.environ["MINIFLUX_BASE_URL"],
-            api_key=os.environ["MINIFLUX_API_KEY"],
-            ca_bundle_path=os.environ.get("MINIFLUX_CA_BUNDLE"),
-            verify_ssl=os.environ.get("MINIFLUX_VERIFY_SSL", "true").lower() not in _FALSY_VALUES,
-        )
 
     @property
     def tls_verify(self) -> bool | str:
@@ -54,13 +40,90 @@ class MinifluxConfig:
 
 
 @dataclass(frozen=True)
-class JobsConfig:
-    jobs_file: Path
-    slack_webhook_url: str | None = None
+class AppConfig:
+    """`[jobs]` in the same file is read by `TomlJobSource` on every run, not here (D-037)."""
 
-    @classmethod
-    def from_env(cls) -> "JobsConfig":
-        return cls(
-            jobs_file=Path(os.environ.get("AGENT_JOBS_FILE", "jobs.toml")),
-            slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
-        )
+    path: Path
+    llm: LLMConfig
+    miniflux: MinifluxConfig
+    slack_webhook_url: str | None = None
+    debug: bool = False
+
+
+def resolve_config_path(arg: str | None, env: Mapping[str, str]) -> Path:
+    value = arg or env.get(CONFIG_ENV)
+    if not value:
+        raise ConfigError(f"no config file: pass --config <path> or set {CONFIG_ENV}")
+    return Path(value)
+
+
+def load_config(path: Path, env: Mapping[str, str]) -> AppConfig:
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ConfigError(f"{path} does not exist") from None
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"{path}: {exc}") from None
+
+    llm = _table(data, "llm")
+    miniflux = _table(data, "miniflux")
+    temperature = _optional(llm, "llm.temperature", (int, float))
+    return AppConfig(
+        path=path,
+        llm=LLMConfig(
+            base_url=_required(llm, "llm.base_url"),
+            api_key=_secret(env, "AGENT_LLM_API_KEY"),
+            model=_required(llm, "llm.model"),
+            system_prompt=_optional(llm, "llm.system_prompt", str),
+            reasoning_effort=_optional(llm, "llm.reasoning_effort", str),
+            temperature=float(temperature) if temperature is not None else None,
+        ),
+        miniflux=MinifluxConfig(
+            base_url=_required(miniflux, "miniflux.base_url"),
+            api_key=_secret(env, "MINIFLUX_API_KEY"),
+            ca_bundle_path=_optional(miniflux, "miniflux.ca_bundle", str),
+            verify_ssl=_flag(miniflux, "miniflux.verify_ssl", default=True),
+        ),
+        slack_webhook_url=env.get("SLACK_WEBHOOK_URL") or None,
+        debug=_flag(data, "debug", default=False),
+    )
+
+
+def _table(data: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    table = data.get(name, {})
+    if not isinstance(table, dict):
+        raise ConfigError(f"[{name}] must be a table")
+    return table
+
+
+def _key(field: str) -> str:
+    return field.rsplit(".", 1)[-1]
+
+
+def _optional(table: Mapping[str, Any], field: str, types: type | tuple[type, ...]) -> Any:
+    value = table.get(_key(field))
+    # bool is an int in Python, but `temperature = true` is a mistake, not 1.0
+    if value is not None and (isinstance(value, bool) or not isinstance(value, types)):
+        raise ConfigError(f"{field} has the wrong type: {value!r}")
+    return value
+
+
+def _required(table: Mapping[str, Any], field: str) -> str:
+    value = _optional(table, field, str)
+    if not value:
+        raise ConfigError(f"{field} is required")
+    return value
+
+
+def _flag(table: Mapping[str, Any], field: str, *, default: bool) -> bool:
+    value = table.get(_key(field), default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{field} must be true or false: {value!r}")
+    return value
+
+
+def _secret(env: Mapping[str, str], name: str) -> str:
+    value = env.get(name)
+    if not value:
+        raise ConfigError(f"{name} must be set in the environment")
+    return value

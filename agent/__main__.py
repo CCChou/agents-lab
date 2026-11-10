@@ -23,7 +23,7 @@ from agent.adapters.miniflux import (
 from agent.adapters.openai_compatible import OpenAICompatibleLLMClient
 from agent.adapters.web import FetchPageTool
 from agent.agents.rss import build_rss_spec
-from agent.config import JobsConfig, LLMConfig, MinifluxConfig
+from agent.config import AppConfig, ConfigError, MinifluxConfig, load_config, resolve_config_path
 from agent.domain.interfaces import Agent, LLMClient, Notifier, SessionLifecycle
 from agent.domain.session import RetentionRule
 from agent.domain.tool import Tool
@@ -43,8 +43,7 @@ def _stdin_lines() -> Iterator[str]:
             return
 
 
-def _build_tools(llm_client: LLMClient) -> list[Tool]:
-    miniflux_config = MinifluxConfig.from_env()
+def _build_tools(llm_client: LLMClient, miniflux_config: MinifluxConfig) -> list[Tool]:
     client = httpx.Client(
         base_url=miniflux_config.base_url,
         headers={"X-Auth-Token": miniflux_config.api_key},
@@ -63,7 +62,8 @@ def _build_tools(llm_client: LLMClient) -> list[Tool]:
     ]
 
 
-SERVE_HOST = "127.0.0.1"  # D-035: no authentication yet, so never listen beyond localhost
+# D-035: no authentication yet, so localhost unless the launcher (e.g. a container) says otherwise
+SERVE_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_SERVER = f"http://{SERVE_HOST}:{DEFAULT_PORT}"
 # A turn can run for minutes with long gaps between events, e.g. while summarize_entry runs.
@@ -77,41 +77,45 @@ SESSION_RETENTION = (
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    config_help = "settings file (D-038); defaults to $AGENT_CONFIG"
     parser = argparse.ArgumentParser(prog="python -m agent")
+    parser.add_argument("--config", help=config_help)
     commands = parser.add_subparsers(dest="command")
-    serve = commands.add_parser("serve", help=f"run the HTTP API on {SERVE_HOST}")
+    serve = commands.add_parser("serve", help="run the HTTP API")
+    # SUPPRESS keeps a --config given before the command from being reset to None
+    serve.add_argument("--config", default=argparse.SUPPRESS, help=config_help)
+    serve.add_argument("--host", default=SERVE_HOST)
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
     chat = commands.add_parser("chat", help="chat in the terminal through a running server")
     chat.add_argument("--server", default=DEFAULT_SERVER)
     return parser.parse_args(argv)
 
 
-def _build_local_agent() -> tuple[Agent, SessionManager]:
-    config = LLMConfig.from_env()
-    spec = build_rss_spec(config.system_prompt)
+def _build_local_agent(config: AppConfig) -> tuple[Agent, SessionManager]:
+    llm = config.llm
+    spec = build_rss_spec(llm.system_prompt)
     llm_client = OpenAICompatibleLLMClient(
-        base_url=config.base_url,
-        api_key=config.api_key,
-        model=spec.model or config.model,
-        reasoning_effort=config.reasoning_effort,
-        temperature=config.temperature,
+        base_url=llm.base_url,
+        api_key=llm.api_key,
+        model=spec.model or llm.model,
+        reasoning_effort=llm.reasoning_effort,
+        temperature=llm.temperature,
     )
-    tools = _build_tools(llm_client)
+    tools = _build_tools(llm_client, config.miniflux)
     store = InMemorySessionStore()
     agent = LoopAgent(spec, llm_client, store, ContextBuilder(store), ToolRegistry(tools))
     return agent, SessionManager(store, store, rules=SESSION_RETENTION)
 
 
-def _build_run_job(agent: Agent, sessions: SessionLifecycle) -> RunJob:
+def _build_run_job(agent: Agent, sessions: SessionLifecycle, config: AppConfig) -> RunJob:
     from agent.adapters.jobs_toml import TomlJobSource
     from agent.adapters.notify.slack import SlackWebhookNotifier
 
-    config = JobsConfig.from_env()
     notifiers: dict[str, Notifier] = {}
     if config.slack_webhook_url:
         client = httpx.Client(timeout=NOTIFY_TIMEOUT)
         notifiers["slack"] = SlackWebhookNotifier(client, config.slack_webhook_url)
-    return RunJob(agent, sessions, TomlJobSource(config.jobs_file), notifiers)
+    return RunJob(agent, sessions, TomlJobSource(config.path), notifiers)
 
 
 def _run_terminal(agent: Agent, sessions: SessionLifecycle) -> None:
@@ -131,22 +135,26 @@ def _run_terminal(agent: Agent, sessions: SessionLifecycle) -> None:
 
 def main() -> None:
     args = _parse_args()
-    if os.environ.get("AGENT_DEBUG"):
-        logging.basicConfig(level=logging.DEBUG)
-
     if args.command == "chat":
         with httpx.Client(base_url=args.server, timeout=CHAT_TIMEOUT) as client:
             _run_terminal(RemoteAgent(client), RemoteSessions(client))
         return
 
-    agent, sessions = _build_local_agent()
+    try:
+        config = load_config(resolve_config_path(args.config, os.environ), os.environ)
+    except ConfigError as exc:
+        sys.exit(f"config error: {exc}")
+    if config.debug:
+        logging.basicConfig(level=logging.DEBUG)
+
+    agent, sessions = _build_local_agent(config)
     if args.command == "serve":
         import uvicorn
 
         from agent.adapters.http.api import create_app
 
-        app = create_app(agent, sessions, run_job=_build_run_job(agent, sessions))
-        uvicorn.run(app, host=SERVE_HOST, port=args.port)
+        app = create_app(agent, sessions, run_job=_build_run_job(agent, sessions, config))
+        uvicorn.run(app, host=args.host, port=args.port)
     else:
         _run_terminal(agent, sessions)
 

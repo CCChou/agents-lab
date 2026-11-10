@@ -7,7 +7,8 @@
 - 終端機多輪對話，對話記憶只存在記憶體
 - 輸入 `/reset` 開始新對話，舊對話保留但不再送給模型（見 D-034）
 - `python -m agent serve` 在本機提供 HTTP API，以 SSE 串流回覆和工具事件（見 D-035）
-- 排程任務：systemd timer 觸發 `jobs.toml` 定義的任務，結果送到 Slack（見 D-037）
+- 排程任務：外部排程器（目前的範例是 systemd timer）觸發設定檔裡 `[jobs]` 定義的任務，結果送到 Slack（見 D-037）
+- 設定集中在一個 TOML 設定檔，用 `--config` 或 `AGENT_CONFIG` 指定，密鑰放在環境變數（見 D-038）
 - 支援任何 OpenAI 相容的 Chat Completions API，可選填 `reasoning_effort`（見 D-023）
 - 工具呼叫迴圈
 - 用 Miniflux 工具查詢 RSS 文章的標題、feed、category、已讀狀態、發布時間和網址，由新到舊排序
@@ -139,7 +140,8 @@
 ## 待決定
 
 - **`summarize_entry` 的定位與 `DigestAgent` 的入口（階段 3 前）**：`SummarizeEntryTool`（見 D-022）實際上是掛在 `Tool` 介面下的流程：LLM 呼叫藏在工具裡，無法單獨換模型或回報進度，階段 4 的記錄也會漏掉。傾向抽出 `ArticleSummarizer`，工具和 `DigestAgent` 都呼叫它，問答留在 `LoopAgent`，批次摘要交給 workflow。D-004 否決了把 workflow 包成工具，所以 `DigestAgent` 要走 `--agent digest` 這類獨立入口，不能在同一段對話裡觸發；想在對話中觸發時，要先重新討論 D-004 或 router（見 D-013）。
-- **Web 從哪裡打開（階段 2.5 的 Web 之前）**：只在服務所在的機器上打開時，綁定 `127.0.0.1` 就夠了；要從其他裝置打開時，要先加驗證，或透過 Tailscale、SSH tunnel（見 D-035）。
+- **Web 從哪裡打開（階段 2.5 的 Web 之前）**：只在內網打開時不加驗證；要從內網以外打開時，要先加驗證，或透過 Tailscale、SSH tunnel（見 D-035）。
+- **服務要跑多個 replica 時（改成 k8s 並需要擴展前）**：session 只存在服務的記憶體裡，現在只能跑一個 replica，k8s 上要固定 `replicas: 1` 並用 `Recreate`。要擴展時，session 要先移到共用的儲存，排程任務也要避免重複觸發（見 D-035、D-036、D-037）。
 - **長期記憶的做法（階段 5 前）**：傾向由 agent 自己管理，使用小型常駐區塊加上 SQLite 或檔案。家庭事實要保留變更歷史。
 - **家庭資料會傳給哪個 LLM 服務（階段 7 前）**：外部 API 或本地模型。
 - **多模態的主要情境（加入 `ImagePart` 前）**：照片輸入可沿用現有設計，即時語音要另外設計。
