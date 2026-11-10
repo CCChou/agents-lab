@@ -1,3 +1,4 @@
+# One timer per job; the part after @ is the job name in jobs.toml and starts agent-job@<name>.service.
 # Uses the machine's local time zone. Persistent= runs a missed trigger after the machine is back.
 [Unit]
 Description=Run the daily-digest job every morning

@@ -30,7 +30,7 @@ source prod.env
 | `MINIFLUX_CA_BUNDLE` | | 自訂 CA 憑證的路徑 |
 | `MINIFLUX_VERIFY_SSL` | | 設成 `false` 可以關閉憑證檢查，預設是 `true` |
 | `AGENT_DEBUG` | | 有設定時輸出 debug 記錄 |
-| `AGENT_JOBS_FILE` | | 排程任務的定義檔，預設是 `jobs.toml` |
+| `AGENT_JOBS_FILE` | | 排程任務的定義檔，預設是啟動目錄下的 `jobs.toml`；部署時用絕對路徑 |
 | `SLACK_WEBHOOK_URL` | | Slack incoming webhook 的網址，沒有設定時不能使用 `slack` 通道 |
 
 ## 在終端機對話
@@ -105,10 +105,22 @@ curl -N -X POST "localhost:8000/sessions/$sid/messages" \
 cp jobs.example.toml jobs.toml
 ```
 
+每個任務是一個 `[jobs.<名稱>]` 區塊，名稱就是觸發時 URL 裡的 `{name}`：
+
 ```toml
 [jobs.daily-digest]
 prompt = "過去 24 小時的科技和新聞趨勢，各推薦最多 5 篇值得讀的文章"
 channels = ["slack"]
+
+[jobs.weekly-ai]
+prompt = "過去 7 天 AI 相關的重要發展，推薦最多 5 篇"
+channels = ["slack"]
+```
+
+預設路徑是相對於啟動服務的目錄，在其他目錄啟動會找不到檔案。部署時在 `prod.env` 用絕對路徑指定：
+
+```bash
+export AGENT_JOBS_FILE=/opt/agents-lab/jobs.toml
 ```
 
 `jobs.toml` 每次執行都會重新讀取，修改後不用重啟服務。服務啟動後，用 HTTP 觸發一個任務：
@@ -133,14 +145,22 @@ curl -fsS -X POST localhost:8000/jobs/daily-digest/run
 | 檔案 | 作用 |
 | --- | --- |
 | `agent.service` | 常駐執行 `python -m agent serve`，先 `source prod.env` 再啟動 |
-| `daily-digest.service` | 用 `curl` 呼叫一次 `POST /jobs/daily-digest/run`，失敗時結束代碼不是 0 |
-| `daily-digest.timer` | 每天 08:00（機器的時區）觸發，錯過時會在開機後補跑 |
+| `agent-job@.service` | 所有任務共用的範本：`agent-job@<名稱>.service` 用 `curl` 呼叫一次 `POST /jobs/<名稱>/run`，失敗時結束代碼不是 0 |
+| `agent-job@daily-digest.timer` | 每天 08:00（機器的時區）觸發 `daily-digest`，錯過時會在開機後補跑 |
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now agent.service daily-digest.timer
-systemctl list-timers daily-digest.timer
-journalctl -u agent.service -u daily-digest.service
+sudo systemctl enable --now agent.service agent-job@daily-digest.timer
+systemctl list-timers 'agent-job@*'
+journalctl -u agent.service -u 'agent-job@*'
+```
+
+新增任務時，service 不用改，只要複製一份 timer，把 `@` 後面換成 `jobs.toml` 裡的名稱，再修改 `OnCalendar=`：
+
+```bash
+sudo cp /etc/systemd/system/agent-job@daily-digest.timer /etc/systemd/system/agent-job@weekly-ai.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-job@weekly-ai.timer
 ```
 
 ## 開發
