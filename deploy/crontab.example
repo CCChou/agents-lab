@@ -1,0 +1,6 @@
+# Add with `crontab -e` on the host running the container (D-037, D-039).
+# Times use the host's time zone. A trigger missed while the machine is off is not run later.
+# curl -f exits non-zero on 404/500/502; each run appends the time and the result to the log.
+# Stagger jobs so two agents do not share the LLM's per-minute limit.
+0 8 * * * (date; curl -fsS --max-time 900 -X POST http://127.0.0.1:8000/jobs/daily-digest/run; echo) >> $HOME/agent-jobs.log 2>&1
+# 15 8 * * * (date; curl -fsS --max-time 900 -X POST http://127.0.0.1:8000/jobs/weekly-ai/run; echo) >> $HOME/agent-jobs.log 2>&1

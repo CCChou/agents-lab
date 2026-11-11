@@ -1,4 +1,5 @@
-# Copy to config.toml (ignored by git) and pass it with --config or AGENT_CONFIG (D-038).
+# Copy to config/config.toml (ignored by git) and pass it with --config or AGENT_CONFIG (D-038).
+# The container reads config/ as /etc/agent/ (D-039).
 # Secrets stay in the environment: AGENT_LLM_API_KEY, MINIFLUX_API_KEY, SLACK_WEBHOOK_URL.
 
 # debug = true                      # log at debug level

@@ -7,7 +7,8 @@
 - 終端機多輪對話，對話記憶只存在記憶體
 - 輸入 `/reset` 開始新對話，舊對話保留但不再送給模型（見 D-034）
 - `python -m agent serve` 在本機提供 HTTP API，以 SSE 串流回覆和工具事件（見 D-035）
-- 排程任務：外部排程器（目前的範例是 systemd timer）觸發設定檔裡 `[jobs]` 定義的任務，結果送到 Slack（見 D-037）
+- 排程任務：主機的 cron 觸發設定檔裡 `[jobs]` 定義的任務，結果送到 Slack（見 D-037）
+- 用 Docker Compose 在單機上以 container 部署（見 D-039）
 - 設定集中在一個 TOML 設定檔，用 `--config` 或 `AGENT_CONFIG` 指定，密鑰放在環境變數（見 D-038）
 - 支援任何 OpenAI 相容的 Chat Completions API，可選填 `reasoning_effort`（見 D-023）
 - 工具呼叫迴圈
@@ -33,6 +34,7 @@
 - [ ] 同一個 category 有多個 feed 時，不保證各 feed 平均分到名額，例如中新網（見 D-027）
 - [ ] `miniflux_query_entries` 的顯示數假設前面的頁都看過，跳頁時會多算（見 D-029）
 - [ ] Session 回收只在開新 session 時觸發，過期的 session 不保證準時刪除（見 D-036）
+- [ ] cron 錯過的排程不會補跑，機器在觸發時間沒開機時，那次就跳過（見 D-039）
 
 ## 路線
 
@@ -111,10 +113,13 @@
 
 練習重點：常駐程序、排程、訊息介面。
 
-- [x] 排程任務由 `RunJob` 交付，systemd timer 呼叫 `POST /jobs/{name}/run`（見 D-037）
+- [x] 排程任務由 `RunJob` 交付，外部排程器呼叫 `POST /jobs/{name}/run`（見 D-037）
 - [x] 第一個通知通道：Slack incoming webhook
 - [ ] 其他通知通道（LINE、mail）；通知只單向送出排程任務的結果，互動只透過 CLI 和 Web
-- [ ] 實際部署到常駐的機器，確認每天的摘要品質
+- [x] container 部署：`Dockerfile`、`compose.yaml`，排程用主機的 cron（見 D-039）
+- [ ] 實際部署到常駐的機器：第一次建置 image 並啟動，確認時區、Miniflux 的名稱解析和每天的摘要品質
+- [ ] 新增 `GET /healthz`，用在 compose 的 `healthcheck` 和 k8s 的 probe
+- [ ] 改用 k8s：manifests 和 image registry，CronJob 取代 cron，並重新看 D-035 的驗證
 - 需要在訊息平台上確認動作時，重新評估 D-005
 
 ### 階段 7：第二類 agent（家庭 agent）

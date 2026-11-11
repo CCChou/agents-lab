@@ -1,0 +1,6 @@
+# Keep secrets, local settings and build leftovers out of the image (D-039).
+*
+!pyproject.toml
+!uv.lock
+!agent/
+**/__pycache__

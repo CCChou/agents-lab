@@ -1,0 +1,20 @@
+# Run from the repo root (D-039): docker compose -f deploy/compose.yaml up -d --build
+# Paths below are relative to this file.
+services:
+  agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: agents-lab:latest
+    restart: unless-stopped
+    # Secrets only, as KEY=VALUE lines (D-038).
+    env_file: ../prod.env
+    environment:
+      TZ: Asia/Taipei
+    # A directory, not a single file: editors that save by replacing the file would leave the
+    # container reading the old copy, and [jobs] edits must show up without a restart (D-037).
+    volumes:
+      - ../config:/etc/agent:ro
+    # Only this host, where cron runs. Docker bypasses ufw, so "8000:8000" opens it to the LAN.
+    ports:
+      - "127.0.0.1:8000:8000"
