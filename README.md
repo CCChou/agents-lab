@@ -23,7 +23,7 @@ uv run python -m agent --config config/config.toml
 - **設定檔** `config/config.toml`：網址、模型、任務等一般設定
 - **環境變數**：只放密鑰
 
-一個設定只會從其中一個地方讀取，環境變數不能覆蓋設定檔的值。`config.toml` 和 `*.env` 都已被 `.gitignore` 忽略，每台機器各自保存一份。設定檔放在 `config/` 目錄裡，本機和 container 用同一個位置。
+一個設定只會從其中一個地方讀取，環境變數不能覆蓋設定檔的值。`config/` 目錄和 `*.env` 都已被 `.gitignore` 忽略，每台機器各自保存一份。設定檔放在 `config/` 目錄裡，本機和 container 用同一個位置。
 
 ### 指定設定檔
 
@@ -309,6 +309,60 @@ crontab -e   # 貼上 deploy/crontab.example 的內容，把任務名稱換成�
 - 重建或重啟 container 後，所有 session 都會遺失（同「HTTP API」）
 - 服務只開放給這台機器。要讓區網的其他機器連進來，把 `compose.yaml` 的 `127.0.0.1:8000:8000` 改成 `8000:8000`。Docker 會直接修改 iptables，ufw 擋不住，而且服務沒有驗證，只能在內網這樣做（見 D-035）
 - container 解析不到 Miniflux 的內網名稱時，在 `compose.yaml` 加上 `extra_hosts` 或 `dns`
+
+## 在本機測試（不用 container）
+
+不用 Docker 也能測試所有功能，流程跟正式環境一樣，只是服務直接跑在本機。
+
+1. 載入密鑰。一定要加 `set -a`，否則變數不會傳給 `uv run` 啟動的程式（見「密鑰」）：
+
+   ```bash
+   set -a; source prod.env; set +a
+   ```
+
+2. 對話。可以直接在同一個程序裡對話，不用啟動服務（見「在終端機對話」）：
+
+   ```bash
+   uv run python -m agent --config config/config.toml
+   ```
+
+   或是跟正式環境一樣，先啟動服務再連過去（見「透過服務對話」）：
+
+   ```bash
+   uv run python -m agent serve --config config/config.toml   # 終端機 1
+   uv run python -m agent chat                                # 終端機 2
+   ```
+
+3. 手動觸發任務，代替 cron。服務啟動後執行（狀態碼見「排程任務與通知」）：
+
+   ```bash
+   curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-digest/run
+   ```
+
+   結果會真的送到 Slack。修改 `[jobs]` 後不用重啟，直接再觸發一次。
+
+4. 需要詳細記錄時，在設定檔最上面加 `debug = true`，再重新啟動。
+
+### 切換到測試用的 LLM 服務
+
+用哪個 LLM 服務由設定檔決定，所以測試環境用另一份設定檔，搭配自己的密鑰檔：
+
+```bash
+cp config/config.toml config/test.toml   # 修改 [llm] 的 base_url、model，不支援的選填欄位要拿掉
+set -a; source test.env; set +a          # 只放這個服務的 AGENT_LLM_API_KEY 和其他密鑰
+uv run python -m agent --config config/test.toml
+```
+
+例如改用 Groq：
+
+```toml
+[llm]
+base_url = "https://api.groq.com/openai/v1"
+model = "qwen/qwen3.8-27b"
+temperature = 0.1
+```
+
+`config/` 整個目錄都不會進版控，可以放多份設定檔。env 檔裡的 `AGENT_LLM_BASE_URL`、`AGENT_LLM_MODEL` 這類舊設定已經不會被讀取，要搬到設定檔（見「從舊的環境變數換過來」）。
 
 ## 開發
 
