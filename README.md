@@ -90,7 +90,7 @@ MINIFLUX_API_KEY=...
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
-在本機執行前，用 `set -a` 載入，變數才會傳給 `uv run` 啟動的程式；container 由 `compose.yaml` 的 `env_file` 載入（見「部署（container）」）：
+在本機執行前，用 `set -a` 載入，變數才會傳給 `uv run` 啟動的程式；container 由 compose 的 `env_file` 載入（見「部署（container）」）：
 
 ```bash
 set -a; source prod.env; set +a
@@ -243,27 +243,22 @@ curl -fsS -X POST localhost:8000/jobs/daily-digest/run
 
 ## 部署（container）
 
-用 Docker Compose 在一台機器上常駐執行服務，排程交給這台機器的 cron（見 D-039）。`deploy/` 裡的檔案：
+用 Docker Compose 在一台機器上常駐執行服務，排程交給這台機器的 cron（見 D-039）。正式環境從 GHCR 拉 image，在本機試跑時改成在這台機器上建置。`deploy/` 裡的檔案：
 
 | 檔案 | 作用 |
 | --- | --- |
 | `Dockerfile` | 建置 image：Python 3.14、只裝執行需要的套件、用非 root 使用者執行 `serve --host 0.0.0.0` |
-| `compose.yaml` | 啟動 container：載入密鑰、掛上設定目錄、設定時區、只開放給這台機器的 `127.0.0.1:8000`，停止後自動重啟 |
-| `crontab.example` | 定時呼叫 `POST /jobs/<名稱>/run` 的 crontab 範例 |
+| `compose.prod.yaml` | 正式環境：拉 `ghcr.io/ccchou/agents-lab`（`AGENT_IMAGE_TAG` 指定的 tag，沒有時用 `latest`）、讀 `prod.env` 和 `config/config.toml`、只開放 `127.0.0.1:8000`，停止後自動重啟 |
+| `compose.local.yaml` | 本機試跑：在這台機器上建置 image，密鑰、設定和 port 都跟正式環境相同，不自動重啟 |
+| `crontab` | 正式環境的排程，直接安裝使用 |
 
-### 第一次部署
+兩份 compose 都設定時區、唯讀掛上 `config/` 目錄。下面的指令都在專案根目錄執行。
 
-需要 Docker 和 Docker Compose。在部署的機器上取得專案後，在專案根目錄執行：
+### 建置、推送與部署
 
-```bash
-mkdir -p config
-cp config.example.toml config/config.toml   # 修改設定和任務
-$EDITOR prod.env                            # 填入密鑰，格式見「密鑰」
-docker compose -f deploy/compose.yaml up -d --build
-curl -fsS -X POST localhost:8000/sessions -H 'Content-Type: application/json' -d '{"owner": "cli"}'
-```
+image 在筆電上建置成 amd64，推到 GitHub Container Registry（GHCR），tag 用 commit 的 sha，在常駐機器上驗證過才標記 `latest`。第一次準備、每一步的指令和通過條件、退回舊版都寫在 `docs/deploy-pipeline.md`，部署時照著做。
 
-最後一行回傳 `session_id` 就表示服務正常。也可以直接對話：`uv run python -m agent chat`。
+部署完成後回傳 `session_id` 就表示服務正常，也可以直接對話：`uv run python -m agent chat`。
 
 container 裡的路徑：
 
@@ -271,44 +266,48 @@ container 裡的路徑：
 | --- | --- | --- |
 | `config/` | `/etc/agent/`（唯讀） | 讀 `/etc/agent/config.toml`，image 已經設定好 `AGENT_CONFIG` |
 | `prod.env` | 環境變數 | 只放密鑰 |
-| `TZ=Asia/Taipei` | 環境變數 | container 預設是 UTC，不設定時「今天」和「過去 24 小時」會差 8 小時；換時區時改 `compose.yaml` |
+| `TZ=Asia/Taipei` | 環境變數 | container 預設是 UTC，不設定時「今天」和「過去 24 小時」會差 8 小時；換時區時改兩份 compose |
 
 掛的是整個 `config/` 目錄，不是單一檔案。用 vim 等編輯器存檔時會換成新的檔案，只掛單一檔案的話 container 會一直讀到舊的內容。
 
 ### 排程
 
-用 cron 定時觸發任務：
-
-```bash
-crontab -e   # 貼上 deploy/crontab.example 的內容，把任務名稱換成設定檔裡的名稱
-```
-
-```cron
-0 8 * * * (date; curl -fsS --max-time 900 -X POST http://127.0.0.1:8000/jobs/daily-digest/run; echo) >> $HOME/agent-jobs.log 2>&1
-15 8 * * * (date; curl -fsS --max-time 900 -X POST http://127.0.0.1:8000/jobs/weekly-ai/run; echo) >> $HOME/agent-jobs.log 2>&1
-```
+`deploy/crontab` 的任務名稱要和 `config/config.toml` 的 `[jobs.*]` 一致，改名時兩邊一起改。安裝方式見 `docs/deploy-pipeline.md` 的「確認排程」，`crontab deploy/crontab` 會取代這個使用者整份 crontab。
 
 - 時間依照這台機器的時區，不是 container 的 `TZ`
-- 多個任務要錯開時間，同時執行容易碰到 LLM 服務的每分鐘額度
+- 任務可以同時觸發，服務會同時執行。LLM 服務的每分鐘額度很小時（例如 Groq），同時執行容易碰到上限，要錯開時間
 - 機器在觸發時間沒有開機時，這次不會補跑
-- 每次執行都會把時間和結果附加到 `~/agent-jobs.log`；失敗時會有 `curl: (22) ... error: 500` 這類訊息，狀態碼的意思見「排程任務與通知」
+- 每次執行都會把時間和結果附加到各任務自己的 `~/agent-jobs-<名稱>.log`，同時執行也不會混在一起；失敗時會有 `curl: (22) ... error: 500` 這類訊息，狀態碼的意思見「排程任務與通知」
+
+### 在本機用 container 試跑
+
+推送 image 之前，可以先在這台機器上建置並啟動，用的密鑰、設定和 port 都跟正式環境相同。不需要登入 GHCR：
+
+```bash
+docker compose -f deploy/compose.local.yaml up -d --build
+curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-tech/run   # 會真的送到 Slack
+```
+
+要換成測試用的 LLM 服務時，不用 container，見「切換到測試用的 LLM 服務」。
 
 ### 日常操作
 
+正式環境用 `-f deploy/compose.prod.yaml`，本機試跑時換成 `-f deploy/compose.local.yaml`：
+
 | 要做的事 | 指令 |
 | --- | --- |
-| 看服務的記錄 | `docker compose -f deploy/compose.yaml logs -f` |
-| 看排程的結果 | `tail -f ~/agent-jobs.log` |
+| 看服務的記錄 | `docker compose -f deploy/compose.prod.yaml logs -f` |
+| 看排程的結果 | `tail -f ~/agent-jobs-*.log` |
 | 修改任務 | 直接改 `config/config.toml` 的 `[jobs]`，下一次執行就生效 |
-| 修改其他設定或密鑰 | 改完後 `docker compose -f deploy/compose.yaml up -d --force-recreate` |
-| 更新程式 | `git pull` 後 `docker compose -f deploy/compose.yaml up -d --build` |
-| 停止 | `docker compose -f deploy/compose.yaml down` |
+| 修改其他設定或密鑰 | 改完後 `docker compose -f deploy/compose.prod.yaml up -d --force-recreate` |
+| 更新程式、compose 或 crontab | 照 `docs/deploy-pipeline.md` 部署，不要直接 `git pull`，compose 和 image 要是同一個 commit |
+| 停止 | `docker compose -f deploy/compose.prod.yaml down` |
 
 注意：
 
 - 重建或重啟 container 後，所有 session 都會遺失（同「HTTP API」）
-- 服務只開放給這台機器。要讓區網的其他機器連進來，把 `compose.yaml` 的 `127.0.0.1:8000:8000` 改成 `8000:8000`。Docker 會直接修改 iptables，ufw 擋不住，而且服務沒有驗證，只能在內網這樣做（見 D-035）
-- container 解析不到 Miniflux 的內網名稱時，在 `compose.yaml` 加上 `extra_hosts` 或 `dns`
+- 服務只開放給這台機器。要讓區網的其他機器連進來，把 `127.0.0.1:8000:8000` 改成 `8000:8000`。Docker 會直接修改 iptables，ufw 擋不住，而且服務沒有驗證，只能在內網這樣做（見 D-035）
+- container 解析不到 Miniflux 的內網名稱時，在不進版控的 `deploy/compose.hosts.yaml` 加上 `extra_hosts` 或 `dns`，啟動時接在後面：`docker compose -f deploy/compose.prod.yaml -f deploy/compose.hosts.yaml up -d`。內網的 IP 是每台機器的設定，不放進版控
 
 ## 在本機測試（不用 container）
 

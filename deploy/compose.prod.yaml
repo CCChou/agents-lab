@@ -1,11 +1,10 @@
-# Run from the repo root (D-039): docker compose -f deploy/compose.yaml up -d --build
-# Paths below are relative to this file.
+# Run from the repo root (D-039): docker compose -f deploy/compose.prod.yaml up -d
+# Pulls the image pushed to GHCR; follow docs/deploy-pipeline.md. Paths are relative to this file.
+# AGENT_IMAGE_TAG picks a commit's image while deploying; latest is the last verified one.
+name: agents-lab
 services:
   agent:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: agents-lab:latest
+    image: ghcr.io/ccchou/agents-lab:${AGENT_IMAGE_TAG:-latest}
     restart: unless-stopped
     # Secrets only, as KEY=VALUE lines (D-038).
     env_file: ../prod.env

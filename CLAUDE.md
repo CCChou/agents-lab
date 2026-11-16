@@ -34,6 +34,7 @@ This project is developed test-first. For every change:
 | `docs/decisions.md` | Design decisions, rejected options, when to revisit | Changing a design or proposing an approach |
 | `docs/roadmap.md` | Stages, known issues, open questions | Starting new work |
 | `docs/vision.md` | Undecided long-term ideas | Planning a new stage |
+| `docs/deploy-pipeline.md` | Build, push, deploy and verify steps with pass criteria, rollback | Deploying or changing the deploy flow |
 
 ## Notes for AI Agents
 

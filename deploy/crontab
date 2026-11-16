@@ -1,0 +1,8 @@
+# Install on the host running compose.prod.yaml (D-037, D-039): crontab deploy/crontab
+# This replaces the user's whole crontab; check `crontab -l` first.
+# Job names must match [jobs.*] in config/config.toml. Times use the host's time zone, and a
+# trigger missed while the machine is off is not run later.
+# curl -f exits non-zero on 404/500/502; each run appends the time and the result to that job's own log.
+# Jobs at the same time share the LLM's per-minute limit; stagger them on a low-limit service.
+0 8 * * * (date; curl -fsS --max-time 900 -X POST http://127.0.0.1:8000/jobs/daily-news/run; echo) >> $HOME/agent-jobs-daily-news.log 2>&1
+0 8 * * * (date; curl -fsS --max-time 900 -X POST http://127.0.0.1:8000/jobs/daily-tech/run; echo) >> $HOME/agent-jobs-daily-tech.log 2>&1
