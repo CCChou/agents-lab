@@ -7,9 +7,8 @@
 
 ```bash
 uv sync
-mkdir -p config
-cp config.example.toml config/config.toml   # 填入 LLM 和 Miniflux 的網址、模型
-$EDITOR prod.env                            # 填入密鑰，見「密鑰」
+cp config/config.example.toml config/config.toml   # 填入 LLM 和 Miniflux 的網址、模型
+$EDITOR prod.env                                   # 填入密鑰，見「密鑰」
 set -a; source prod.env; set +a
 uv run python -m agent --config config/config.toml
 ```
@@ -23,7 +22,7 @@ uv run python -m agent --config config/config.toml
 - **設定檔** `config/config.toml`：網址、模型、任務等一般設定
 - **環境變數**：只放密鑰
 
-一個設定只會從其中一個地方讀取，環境變數不能覆蓋設定檔的值。`config/` 目錄和 `*.env` 都已被 `.gitignore` 忽略，每台機器各自保存一份。設定檔放在 `config/` 目錄裡，本機和 container 用同一個位置。
+一個設定只會從其中一個地方讀取，環境變數不能覆蓋設定檔的值。設定檔放在 `config/` 目錄裡，本機和 container 用同一個位置。`config/` 裡只有範例 `config.example.toml` 進版控，其他檔案和 `*.env` 都被 `.gitignore` 忽略，每台機器各自保存一份（見 D-042）。
 
 ### 指定設定檔
 
@@ -44,7 +43,7 @@ uv run python -m agent serve
 
 ### 設定檔
 
-完整範例見 `config.example.toml`：
+完整範例見 `config/config.example.toml`：
 
 ```toml
 # debug = true
@@ -362,7 +361,7 @@ model = "qwen/qwen3.8-27b"
 temperature = 0.1
 ```
 
-`config/` 整個目錄都不會進版控，可以放多份設定檔。env 檔裡的 `AGENT_LLM_BASE_URL`、`AGENT_LLM_MODEL` 這類舊設定已經不會被讀取，要搬到設定檔（見「從舊的環境變數換過來」）。
+`config/` 裡除了範例都不會進版控，可以放多份設定檔。env 檔裡的 `AGENT_LLM_BASE_URL`、`AGENT_LLM_MODEL` 這類舊設定已經不會被讀取，要搬到設定檔（見「從舊的環境變數換過來」）。
 
 ## 開發
 

@@ -5,5 +5,7 @@ __pycache__/
 .ruff_cache/
 .env
 *.env
-config/
+# Real config stays per machine; only the examples are committed (D-042).
+config/*
+!config/*.example.toml
 deploy/compose.hosts.yaml

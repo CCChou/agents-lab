@@ -36,12 +36,11 @@ dnf install -y podman podman-compose git cronie
 systemctl enable --now crond
 
 git clone https://github.com/CCChou/agents-lab.git ~/agents-lab && cd ~/agents-lab   # public repo，不用 SSH key
-mkdir -p config
-cp config.example.toml config/config.toml   # 修改設定和任務，見 README 的「設定」
-$EDITOR prod.env                            # 只放密鑰，見 README 的「密鑰」
-chmod 755 config && chmod 644 config/*.toml # container 裡用 uid 10001 讀，要讓其他人可讀
-chmod 600 prod.env                          # 由 podman 在主機上讀，不用給 container
-podman login ghcr.io -u CCChou              # 這台的 token 只需要 read:packages，記下到期日
+cp config/config.example.toml config/config.toml   # 修改設定和任務，見 README 的「設定」
+$EDITOR prod.env                                   # 只放密鑰，見 README 的「密鑰」
+chmod 755 config && chmod 644 config/*.toml        # container 裡用 uid 10001 讀，要讓其他人可讀
+chmod 600 prod.env                                 # 由 podman 在主機上讀，不用給 container
+podman login ghcr.io -u CCChou                     # 這台的 token 只需要 read:packages，記下到期日
 podman compose -f deploy/compose.prod.yaml config   # 看得懂 name 和 ${AGENT_IMAGE_TAG:-latest}
 
 # 用 systemd 管理 compose：開機時啟動，systemctl start/stop/restart 操作
@@ -110,7 +109,7 @@ echo "$(date -Iseconds) deploy $prev -> $sha" >> ~/agent-deploys.log
 
 ```bash
 git fetch
-git diff "$prev" "$sha" -- config.example.toml agent/config.py
+git diff "$prev" "$sha" -- config/config.example.toml config.example.toml agent/config.py   # 範例在 D-042 前放在根目錄
 ```
 
 通過條件：沒有輸出，或已經照著差異更新 `config/config.toml` 和 `prod.env`。設定檔不進版控，新版多了必填欄位或密鑰時，container 會在啟動時因為 `config error` 結束。

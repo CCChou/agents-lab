@@ -338,7 +338,7 @@
 ## D-038：設定集中在一個 TOML 設定檔，密鑰放在環境變數
 
 - 日期：2026-11-10
-- 狀態：生效中
+- 狀態：部分被 D-042 取代（範例檔的位置和 `.gitignore`），其餘生效中
 - 決定：設定集中在一個 TOML 設定檔，由 `load_config(path, env)` 讀成 `AppConfig`（`llm`、`miniflux`、`slack_webhook_url`、`debug`），任務也放在同一個檔案的 `[jobs]`（D-037）。密鑰 `AGENT_LLM_API_KEY`、`MINIFLUX_API_KEY`、`SLACK_WEBHOOK_URL` 只從環境變數讀，其他設定只從檔案讀，環境變數不能覆蓋檔案。設定檔的路徑由 `--config` 指定，沒有時讀 `AGENT_CONFIG`，兩者都沒有就無法啟動，不在啟動目錄或固定路徑裡找。`serve` 和同一個程序的對話需要設定檔，`chat --server` 不需要。監聽的位址由 `serve --host`、`--port` 決定，不放進設定檔。缺少必填欄位、型別錯誤或缺少密鑰時，啟動時丟出 `ConfigError` 並指出欄位名稱。原本的 `AGENT_LLM_BASE_URL`、`AGENT_LLM_MODEL`、`AGENT_LLM_TEMPERATURE`、`AGENT_LLM_REASONING_EFFORT`、`AGENT_SYSTEM_PROMPT`、`MINIFLUX_BASE_URL`、`MINIFLUX_CA_BUNDLE`、`MINIFLUX_VERIFY_SSL`、`AGENT_DEBUG` 依序改成 `llm.base_url`、`llm.model`、`llm.temperature`、`llm.reasoning_effort`、`llm.system_prompt`、`miniflux.base_url`、`miniflux.ca_bundle`、`miniflux.verify_ssl`、`debug`，`AGENT_JOBS_FILE` 移除，不保留讀環境變數的舊方式。專案只放 `config.example.toml`，設定檔放在 `config/` 目錄，整個目錄加進 `.gitignore`，同一台機器可以放多份設定檔，例如測試用的 `config/test.toml`。
 - 原因：之後要用 container 部署，再換成 k8s。設定檔可以整份掛進 container（k8s 的 ConfigMap），密鑰交給 Secret，兩者分開管理。原本 `jobs.toml` 的預設路徑依賴啟動目錄，在 container 裡沒有意義，在主機上換目錄啟動也會找不到。每個設定只有一個來源，查問題時不用比對檔案和環境變數。監聽的位址屬於怎麼啟動程序，container 裡一定是 `0.0.0.0`，寫在啟動指令裡，不依賴掛進來的設定檔（D-035）。env 由參數傳進 `load_config`，測試不用修改程序的環境變數。只有一個使用者，同時維護兩種讀取方式不划算。任務是選用的，設定檔沒有 `[jobs]` 也能啟動，任務有錯時在執行時才報錯。
 - 考慮過但沒選：繼續用環境變數，設定多了難管理，`export` 的寫法也不被 `docker run --env-file` 接受；沒有指定時在啟動目錄找設定檔，結果依賴從哪裡啟動；沒有指定時讀 `~/.config/agents-lab/config.toml`，多一個要記的位置；環境變數可以覆蓋任何設定，同一個值有兩個來源；任務留在獨立的 `jobs.toml`，部署時要多掛一個檔案；啟動時檢查 `[jobs]`，任務是選用的功能，不應該讓服務無法啟動；用 `pydantic-settings` 等套件，標準函式庫的 `tomllib` 就夠用。
@@ -371,3 +371,13 @@
 - 原因：常駐機器已經是 RHEL，RHEL 內建的是 Podman，image 是 OCI 格式，Docker 建置的可以直接拉。沿用 compose，筆電和常駐機器用同一種格式，cron 和 pipeline 的步驟只要把 `docker` 換成 `podman`。Podman 沒有 daemon，`unless-stopped` 的 container 在重開機後不會啟動；交給 systemd 後，開機啟動、停止和查看狀態都用 `systemctl`，跟主機上其他服務一樣。版本寫在檔案裡，重開機後跑的是最後部署或退回的版本；只用 `latest` 的話，退回舊版後重開機會跑回有問題的版本。RHEL 的 SELinux 預設是 enforcing，沒有重新標籤的 bind mount 在 container 裡讀不到。用 root 執行，不用處理 linger、subuid 和登出後 container 停止的問題，操作方式跟原本的 Docker 相同。
 - 考慮過但沒選：只啟用 `podman-restart.service`，開機時會啟動 `always` 的 container，但沒有 `systemctl status` 可以看，也不知道開機時要跑哪個版本，部署時還要每次帶 `AGENT_IMAGE_TAG`；unit 用 `Type=simple` 在前景執行 `podman compose up`，systemd 追蹤的是 podman-compose 的程序，不是 container，container 自己結束時兩邊會不同步；rootless Podman，安全性比較好，但要設定專用帳號、`loginctl enable-linger` 和 user 層的 systemd 服務，目前只有一台機器、一個服務；Quadlet（`.container` 單元交給 systemd），RHEL 原生、記錄進 journald，但常駐機器和筆電會是兩種格式，之後也要換成 k8s；在 RHEL 上裝 Docker CE，不是 RHEL 支援的套件；用 `podman-docker` 偽裝成 `docker` 指令，文件裡的指令看不出實際用的是 Podman。
 - 重新評估的時機：同一台機器要跑其他服務，或 agent 開始有副作用的工具時，改成 rootless 或專用帳號；`podman-compose` 不支援要用的 compose 功能時，改用 `docker-compose` 搭配 `podman.socket`，或改用 Quadlet；改用 k8s 時，可以先用 `podman kube play` 驗證 manifests。
+
+## D-042：設定範例放進 `config/`，只有範例進版控
+
+- 日期：2026-11-16
+- 狀態：生效中
+- 決定：取代 D-038 裡「專案只放 `config.example.toml`，`config/` 整個目錄加進 `.gitignore`」。範例移到 `config/config.example.toml`，`.gitignore` 改成 `config/*` 加上 `!config/*.example.toml`，只有 `*.example.toml` 進版控，`config.toml`、`test.toml` 等實際設定仍然留在每台機器。密鑰檔 `prod.env`、`test.env` 留在根目錄，不放範例。設定的讀取方式和 `AGENT_CONFIG` 不變。
+- 原因：範例和實際設定放在同一個目錄，看目錄就知道要複製哪個檔案、放在哪裡，clone 下來就有 `config/`，不用先 `mkdir`。密鑰檔不放進 `config/`，因為整個 `config/` 會掛進 container（D-039），container 只該從環境變數拿到密鑰；格式在 README 的「密鑰」裡已經寫清楚，不另外放範例。
+- 取捨：整個 `config/` 掛進 container，container 裡也看得到 `/etc/agent/config.example.toml`；程式只讀 `AGENT_CONFIG` 指定的檔案，不受影響。
+- 考慮過但沒選：範例留在根目錄，範例和實際設定分開兩個地方；放 `config/prod.env.example`，密鑰的範例會被掛進 container，也要另外維護一份格式說明。
+- 重新評估的時機：設定分成多個檔案，或 container 只該看到自己的設定檔時，改成只掛需要的檔案或改用 k8s 的 ConfigMap。
