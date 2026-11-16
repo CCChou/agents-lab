@@ -250,6 +250,7 @@ curl -fsS -X POST localhost:8000/jobs/daily-digest/run
 | `Dockerfile` | 建置 image：Python 3.14、只裝執行需要的套件、用非 root 使用者執行 `serve --host 0.0.0.0` |
 | `compose.prod.yaml` | 正式環境（`podman compose`）：拉 `ghcr.io/ccchou/agents-lab`（`AGENT_IMAGE_TAG` 指定的 tag，沒有時用 `latest`）、讀 `prod.env` 和 `config/config.toml`、只開放 `127.0.0.1:8000`，停止和重開機後自動啟動 |
 | `compose.local.yaml` | 本機試跑（`docker compose`）：在這台機器上建置 image，密鑰、設定和 port 都跟正式環境相同，不自動重啟 |
+| `agents-lab.service` | 正式環境的 systemd unit：開機時用 `podman compose` 啟動，從 `/etc/agents-lab/image.env` 讀要跑的版本 |
 | `crontab` | 正式環境的排程，直接安裝使用 |
 
 兩份 compose 都設定時區、唯讀掛上 `config/` 目錄。下面的指令都在專案根目錄執行。
@@ -292,16 +293,16 @@ curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-tech/run   # 會真�
 
 ### 日常操作
 
-正式環境在常駐機器上用 `podman compose -f deploy/compose.prod.yaml`，本機試跑時換成 `docker compose -f deploy/compose.local.yaml`：
+正式環境在常駐機器上由 `agents-lab.service` 管理，用 root 執行；本機試跑時用 `docker compose -f deploy/compose.local.yaml`：
 
 | 要做的事 | 指令 |
 | --- | --- |
-| 看服務的記錄 | `podman compose -f deploy/compose.prod.yaml logs -f` |
+| 看服務的狀態和記錄 | `systemctl status agents-lab`、`podman logs -f agents-lab_agent_1` |
 | 看排程的結果 | `tail -f ~/agent-jobs-*.log` |
 | 修改任務 | 直接改 `config/config.toml` 的 `[jobs]`，下一次執行就生效 |
-| 修改其他設定或密鑰 | 改完後 `podman compose -f deploy/compose.prod.yaml up -d --force-recreate` |
+| 修改其他設定或密鑰 | 改完後 `systemctl restart agents-lab` |
 | 更新程式、compose 或 crontab | 照 `docs/deploy-pipeline.md` 部署，不要直接 `git pull`，compose 和 image 要是同一個 commit |
-| 停止 | `podman compose -f deploy/compose.prod.yaml down` |
+| 停止、啟動 | `systemctl stop agents-lab`、`systemctl start agents-lab`；`systemctl disable` 後開機不再啟動 |
 
 注意：
 

@@ -34,10 +34,8 @@ subscription-manager repos --enable codeready-builder-for-rhel-9-$(arch)-rpms
 dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
 dnf install -y podman podman-compose git cronie
 systemctl enable --now crond
-# 開機時啟動 restart: always 的 container；Podman 沒有 daemon，沒有這個服務重開機後不會啟動
-systemctl enable podman-restart.service
 
-git clone git@github.com:CCChou/agents-lab.git ~/agents-lab && cd ~/agents-lab
+git clone https://github.com/CCChou/agents-lab.git ~/agents-lab && cd ~/agents-lab   # public repo，不用 SSH key
 mkdir -p config
 cp config.example.toml config/config.toml   # 修改設定和任務，見 README 的「設定」
 $EDITOR prod.env                            # 只放密鑰，見 README 的「密鑰」
@@ -45,11 +43,19 @@ chmod 755 config && chmod 644 config/*.toml # container 裡用 uid 10001 讀，�
 chmod 600 prod.env                          # 由 podman 在主機上讀，不用給 container
 podman login ghcr.io -u CCChou              # 這台的 token 只需要 read:packages，記下到期日
 podman compose -f deploy/compose.prod.yaml config   # 看得懂 name 和 ${AGENT_IMAGE_TAG:-latest}
+
+# 用 systemd 管理 compose：開機時啟動，systemctl start/stop/restart 操作
+mkdir -p /etc/agents-lab
+ln -s /root/agents-lab/deploy/agents-lab.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable agents-lab        # 第一次部署的 3.4 才啟動
 ```
+
+`agents-lab.service` 從 `/etc/agents-lab/image.env` 讀 `AGENT_IMAGE_TAG`，每次部署時寫入，所以重開機後跑的是最後部署的版本，不是 `latest`。不要另外啟用 `podman-restart.service`，開機啟動只交給這個 unit；container 自己結束時，由 compose 的 `restart: always` 重啟。unit 用連結的方式安裝，`git checkout` 換版本時也會跟著換，unit 有變更時要 `systemctl daemon-reload`。
 
 `config/` 會被 compose 的 `:Z` 重新標上 SELinux 標籤，只給這個 container 用。
 
-container 解析不到 Miniflux 的內網名稱時，在這台建立不進版控的 `deploy/compose.hosts.yaml`（`extra_hosts` 或 `dns`），之後每個 `podman compose` 指令都在 `-f deploy/compose.prod.yaml` 後面加上 `-f deploy/compose.hosts.yaml`。
+container 解析不到 Miniflux 的內網名稱時，在這台建立不進版控的 `deploy/compose.hosts.yaml`（`extra_hosts` 或 `dns`），並在 unit 的 `ExecStart`、`ExecStop` 和下面的 `podman compose` 指令都加上 `-f deploy/compose.hosts.yaml`。目前的常駐機器不需要。
 
 第一次部署時還沒有舊版可以退回，第 3 階段失敗時只能修好後重新跑一次流程。
 
@@ -93,11 +99,12 @@ docker buildx imagetools inspect "ghcr.io/ccchou/agents-lab:$sha"
 ```bash
 cd ~/agents-lab
 sha=<第 2 階段的 sha>
-prev=$(git rev-parse --short HEAD)
+prev=$(sed -n 's/^AGENT_IMAGE_TAG=//p' /etc/agents-lab/image.env 2>/dev/null)
+prev=${prev:-$(git rev-parse --short HEAD)}   # 第一次部署還沒有 image.env
 echo "$(date -Iseconds) deploy $prev -> $sha" >> ~/agent-deploys.log
 ```
 
-`prev` 是上次部署時切過去的 commit，也是退回時要用的 tag。
+`prev` 是目前在跑的版本，也是退回時要用的 tag。
 
 ### 3.3 比對設定有沒有變更
 
@@ -111,13 +118,16 @@ git diff "$prev" "$sha" -- config.example.toml agent/config.py
 ### 3.4 切到同一個 commit 並啟動
 
 ```bash
-git checkout "$sha"     # compose 和 crontab 要和 image 是同一個 commit，不用 git pull
-AGENT_IMAGE_TAG=$sha podman compose -f deploy/compose.prod.yaml pull
-AGENT_IMAGE_TAG=$sha podman compose -f deploy/compose.prod.yaml up -d
-podman compose -f deploy/compose.prod.yaml ps
+git checkout "$sha"     # compose、crontab 和 unit 要和 image 是同一個 commit，不用 git pull
+echo "AGENT_IMAGE_TAG=$sha" > /etc/agents-lab/image.env
+AGENT_IMAGE_TAG=$sha podman compose -f deploy/compose.prod.yaml pull   # 先拉好，restart 時不用等
+systemctl daemon-reload                # unit 有變更時才需要，執行也無妨
+systemctl restart agents-lab
+systemctl status agents-lab --no-pager
+podman ps
 ```
 
-通過條件：`ps` 顯示 `Up`，image 是 `ghcr.io/ccchou/agents-lab:$sha`。`git checkout` 之後是 detached HEAD，這是預期的。
+通過條件：`status` 是 `active (exited)`（oneshot 的正常狀態），`podman ps` 裡的 container 是 `Up`，image 是 `ghcr.io/ccchou/agents-lab:$sha`。`git checkout` 之後是 detached HEAD，這是預期的。啟動失敗時看 `journalctl -u agents-lab` 和 `podman logs agents-lab_agent_1`。
 
 ### 3.5 驗證
 
@@ -135,7 +145,7 @@ curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-tech/run   # 會真�
 | `date` | 時區是 `CST`（台北時間） |
 | `getent hosts` | 印出 Miniflux 的 IP |
 | 觸發任務 | 回傳 200 和 `session_id`；Slack 收到訊息，日期是台北時間，文章來自 Miniflux |
-| 重開機（只有第一次部署） | `systemctl reboot` 後，`podman ps` 裡有這個 container，`POST /sessions` 仍然正常 |
+| 重開機（只有第一次部署） | `systemctl reboot` 後，`systemctl status agents-lab` 是 `active`，`podman ps` 的 image 仍然是 `:$sha`，`POST /sessions` 正常 |
 
 `POST /sessions` 之後會換成 `GET /healthz`（見 roadmap 階段 6）。自動化時，觸發任務會真的送出通知，只在第一次部署或手動要求時執行。
 
@@ -153,7 +163,7 @@ diff <(crontab -l 2>/dev/null) deploy/crontab && echo "crontab up to date"
 docker buildx imagetools create -t ghcr.io/ccchou/agents-lab:latest "ghcr.io/ccchou/agents-lab:$sha"
 ```
 
-通過條件：`docker buildx imagetools inspect ghcr.io/ccchou/agents-lab:latest` 的 digest 和 `:$sha` 相同。之後在常駐機器上不加 `AGENT_IMAGE_TAG` 的 `podman compose` 指令（README 的「日常操作」）也會用這個版本。
+通過條件：`docker buildx imagetools inspect ghcr.io/ccchou/agents-lab:latest` 的 digest 和 `:$sha` 相同。`latest` 只在沒有 `image.env` 時才會用到，例如新的常駐機器。
 
 ### 3.8 清理
 
@@ -175,8 +185,10 @@ tail ~/agent-jobs-*.log
 
 ```bash
 git checkout "$prev"
-AGENT_IMAGE_TAG=$prev podman compose -f deploy/compose.prod.yaml up -d
+echo "AGENT_IMAGE_TAG=$prev" > /etc/agents-lab/image.env
+systemctl daemon-reload
+systemctl restart agents-lab
 echo "$(date -Iseconds) rollback -> $prev" >> ~/agent-deploys.log
 ```
 
-再跑一次 3.5。設定在 3.3 改過時，也要改回來。`latest` 還沒移過去時不用動；已經移過去時，在筆電上把 `latest` 指回 `$prev`（同 3.7）。
+再跑一次 3.5。重開機後仍然是 `$prev`，因為版本記在 `image.env`。設定在 3.3 改過時，也要改回來。`latest` 還沒移過去時不用動；已經移過去時，在筆電上把 `latest` 指回 `$prev`（同 3.7）。

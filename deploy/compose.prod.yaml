@@ -1,12 +1,11 @@
-# Run as root on the RHEL host from the repo root (D-041): podman compose -f deploy/compose.prod.yaml up -d
+# Run as root on the RHEL host through deploy/agents-lab.service (D-041), not by hand.
 # Pulls the image pushed to GHCR; follow docs/deploy-pipeline.md. Paths are relative to this file.
-# AGENT_IMAGE_TAG picks a commit's image while deploying; latest is the last verified one.
+# AGENT_IMAGE_TAG comes from /etc/agents-lab/image.env; latest is the last verified one.
 name: agents-lab
 services:
   agent:
     image: ghcr.io/ccchou/agents-lab:${AGENT_IMAGE_TAG:-latest}
-    # Podman has no daemon: podman-restart.service starts "always" containers at boot,
-    # but not "unless-stopped" ones.
+    # Restarts the container when it exits; agents-lab.service starts it at boot.
     restart: always
     # Secrets only, as KEY=VALUE lines (D-038).
     env_file: ../prod.env
