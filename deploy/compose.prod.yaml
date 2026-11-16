@@ -1,19 +1,23 @@
-# Run from the repo root (D-039): docker compose -f deploy/compose.prod.yaml up -d
+# Run as root on the RHEL host from the repo root (D-041): podman compose -f deploy/compose.prod.yaml up -d
 # Pulls the image pushed to GHCR; follow docs/deploy-pipeline.md. Paths are relative to this file.
 # AGENT_IMAGE_TAG picks a commit's image while deploying; latest is the last verified one.
 name: agents-lab
 services:
   agent:
     image: ghcr.io/ccchou/agents-lab:${AGENT_IMAGE_TAG:-latest}
-    restart: unless-stopped
+    # Podman has no daemon: podman-restart.service starts "always" containers at boot,
+    # but not "unless-stopped" ones.
+    restart: always
     # Secrets only, as KEY=VALUE lines (D-038).
     env_file: ../prod.env
     environment:
       TZ: Asia/Taipei
     # A directory, not a single file: editors that save by replacing the file would leave the
     # container reading the old copy, and [jobs] edits must show up without a restart (D-037).
+    # Z relabels it for SELinux; without it the container cannot read the files.
     volumes:
-      - ../config:/etc/agent:ro
-    # Only this host, where cron runs. Docker bypasses ufw, so "8000:8000" opens it to the LAN.
+      - ../config:/etc/agent:ro,Z
+    # Only this host, where cron runs. "8000:8000" opens it to the LAN, and the service has no
+    # authentication (D-035); do not count on firewalld to block container ports.
     ports:
       - "127.0.0.1:8000:8000"

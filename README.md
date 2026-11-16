@@ -243,13 +243,13 @@ curl -fsS -X POST localhost:8000/jobs/daily-digest/run
 
 ## 部署（container）
 
-用 Docker Compose 在一台機器上常駐執行服務，排程交給這台機器的 cron（見 D-039）。正式環境從 GHCR 拉 image，在本機試跑時改成在這台機器上建置。`deploy/` 裡的檔案：
+用 compose 在一台機器上常駐執行服務，排程交給這台機器的 cron（見 D-039）。正式環境是 RHEL，由 root 用 Podman 從 GHCR 拉 image（見 D-041）；在筆電上試跑時用 Docker 在這台機器上建置。`deploy/` 裡的檔案：
 
 | 檔案 | 作用 |
 | --- | --- |
 | `Dockerfile` | 建置 image：Python 3.14、只裝執行需要的套件、用非 root 使用者執行 `serve --host 0.0.0.0` |
-| `compose.prod.yaml` | 正式環境：拉 `ghcr.io/ccchou/agents-lab`（`AGENT_IMAGE_TAG` 指定的 tag，沒有時用 `latest`）、讀 `prod.env` 和 `config/config.toml`、只開放 `127.0.0.1:8000`，停止後自動重啟 |
-| `compose.local.yaml` | 本機試跑：在這台機器上建置 image，密鑰、設定和 port 都跟正式環境相同，不自動重啟 |
+| `compose.prod.yaml` | 正式環境（`podman compose`）：拉 `ghcr.io/ccchou/agents-lab`（`AGENT_IMAGE_TAG` 指定的 tag，沒有時用 `latest`）、讀 `prod.env` 和 `config/config.toml`、只開放 `127.0.0.1:8000`，停止和重開機後自動啟動 |
+| `compose.local.yaml` | 本機試跑（`docker compose`）：在這台機器上建置 image，密鑰、設定和 port 都跟正式環境相同，不自動重啟 |
 | `crontab` | 正式環境的排程，直接安裝使用 |
 
 兩份 compose 都設定時區、唯讀掛上 `config/` 目錄。下面的指令都在專案根目錄執行。
@@ -268,7 +268,7 @@ container 裡的路徑：
 | `prod.env` | 環境變數 | 只放密鑰 |
 | `TZ=Asia/Taipei` | 環境變數 | container 預設是 UTC，不設定時「今天」和「過去 24 小時」會差 8 小時；換時區時改兩份 compose |
 
-掛的是整個 `config/` 目錄，不是單一檔案。用 vim 等編輯器存檔時會換成新的檔案，只掛單一檔案的話 container 會一直讀到舊的內容。
+掛的是整個 `config/` 目錄，不是單一檔案。用 vim 等編輯器存檔時會換成新的檔案，只掛單一檔案的話 container 會一直讀到舊的內容。在 RHEL 上，`config/` 要讓其他人可讀（`755`、`644`），因為 container 裡用 uid 10001 讀；SELinux 由 compose 的 `:Z` 處理。
 
 ### 排程
 
@@ -292,22 +292,22 @@ curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-tech/run   # 會真�
 
 ### 日常操作
 
-正式環境用 `-f deploy/compose.prod.yaml`，本機試跑時換成 `-f deploy/compose.local.yaml`：
+正式環境在常駐機器上用 `podman compose -f deploy/compose.prod.yaml`，本機試跑時換成 `docker compose -f deploy/compose.local.yaml`：
 
 | 要做的事 | 指令 |
 | --- | --- |
-| 看服務的記錄 | `docker compose -f deploy/compose.prod.yaml logs -f` |
+| 看服務的記錄 | `podman compose -f deploy/compose.prod.yaml logs -f` |
 | 看排程的結果 | `tail -f ~/agent-jobs-*.log` |
 | 修改任務 | 直接改 `config/config.toml` 的 `[jobs]`，下一次執行就生效 |
-| 修改其他設定或密鑰 | 改完後 `docker compose -f deploy/compose.prod.yaml up -d --force-recreate` |
+| 修改其他設定或密鑰 | 改完後 `podman compose -f deploy/compose.prod.yaml up -d --force-recreate` |
 | 更新程式、compose 或 crontab | 照 `docs/deploy-pipeline.md` 部署，不要直接 `git pull`，compose 和 image 要是同一個 commit |
-| 停止 | `docker compose -f deploy/compose.prod.yaml down` |
+| 停止 | `podman compose -f deploy/compose.prod.yaml down` |
 
 注意：
 
 - 重建或重啟 container 後，所有 session 都會遺失（同「HTTP API」）
-- 服務只開放給這台機器。要讓區網的其他機器連進來，把 `127.0.0.1:8000:8000` 改成 `8000:8000`。Docker 會直接修改 iptables，ufw 擋不住，而且服務沒有驗證，只能在內網這樣做（見 D-035）
-- container 解析不到 Miniflux 的內網名稱時，在不進版控的 `deploy/compose.hosts.yaml` 加上 `extra_hosts` 或 `dns`，啟動時接在後面：`docker compose -f deploy/compose.prod.yaml -f deploy/compose.hosts.yaml up -d`。內網的 IP 是每台機器的設定，不放進版控
+- 服務只開放給這台機器。要讓區網的其他機器連進來，把 `127.0.0.1:8000:8000` 改成 `8000:8000`。container runtime 會自己加防火牆規則，不要以為 ufw 或 firewalld 擋得住，而且服務沒有驗證，只能在內網這樣做（見 D-035）
+- container 解析不到 Miniflux 的內網名稱時，在不進版控的 `deploy/compose.hosts.yaml` 加上 `extra_hosts` 或 `dns`，啟動時接在後面：`podman compose -f deploy/compose.prod.yaml -f deploy/compose.hosts.yaml up -d`。內網的 IP 是每台機器的設定，不放進版控
 
 ## 在本機測試（不用 container）
 

@@ -1,6 +1,6 @@
 # 部署流程
 
-從筆電上的一個 commit 到常駐機器上跑起來的步驟（見 D-040）。目前全部手動執行，每一步都寫明通過條件，以後可以照著換成 git hook、GitHub Actions 或 k8s。任何一步沒通過就停下來，不要往下做。
+從筆電上的一個 commit 到常駐機器上跑起來的步驟（見 D-040、D-041）。筆電用 colima 和 Docker 建置，常駐機器是 RHEL 9.6，由 root 用 Podman 執行（rootful）。目前全部手動執行，每一步都寫明通過條件，以後可以照著換成 git hook、GitHub Actions 或 k8s。任何一步沒通過就停下來，不要往下做。
 
 | 階段 | 在哪裡 | 以後可以交給 |
 | --- | --- | --- |
@@ -26,17 +26,30 @@ docker run --privileged --rm tonistiigi/binfmt --install amd64
 echo "$GHCR_TOKEN" | docker login ghcr.io -u CCChou --password-stdin
 ```
 
-**常駐機器**
+**常駐機器（RHEL 9.6，以下都用 root 執行）**
 
 ```bash
-git clone git@github.com:CCChou/agents-lab.git && cd agents-lab
+# podman-compose 在 EPEL 裡，EPEL 需要 CodeReady Builder
+subscription-manager repos --enable codeready-builder-for-rhel-9-$(arch)-rpms
+dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+dnf install -y podman podman-compose git cronie
+systemctl enable --now crond
+# 開機時啟動 restart: always 的 container；Podman 沒有 daemon，沒有這個服務重開機後不會啟動
+systemctl enable podman-restart.service
+
+git clone git@github.com:CCChou/agents-lab.git ~/agents-lab && cd ~/agents-lab
 mkdir -p config
 cp config.example.toml config/config.toml   # 修改設定和任務，見 README 的「設定」
 $EDITOR prod.env                            # 只放密鑰，見 README 的「密鑰」
-docker login ghcr.io -u CCChou              # 這台的 token 只需要 read:packages，記下到期日
+chmod 755 config && chmod 644 config/*.toml # container 裡用 uid 10001 讀，要讓其他人可讀
+chmod 600 prod.env                          # 由 podman 在主機上讀，不用給 container
+podman login ghcr.io -u CCChou              # 這台的 token 只需要 read:packages，記下到期日
+podman compose -f deploy/compose.prod.yaml config   # 看得懂 name 和 ${AGENT_IMAGE_TAG:-latest}
 ```
 
-container 解析不到 Miniflux 的內網名稱時，在這台建立不進版控的 `deploy/compose.hosts.yaml`（`extra_hosts` 或 `dns`），之後每個 `docker compose` 指令都在 `-f deploy/compose.prod.yaml` 後面加上 `-f deploy/compose.hosts.yaml`。
+`config/` 會被 compose 的 `:Z` 重新標上 SELinux 標籤，只給這個 container 用。
+
+container 解析不到 Miniflux 的內網名稱時，在這台建立不進版控的 `deploy/compose.hosts.yaml`（`extra_hosts` 或 `dns`），之後每個 `podman compose` 指令都在 `-f deploy/compose.prod.yaml` 後面加上 `-f deploy/compose.hosts.yaml`。
 
 第一次部署時還沒有舊版可以退回，第 3 階段失敗時只能修好後重新跑一次流程。
 
@@ -99,17 +112,17 @@ git diff "$prev" "$sha" -- config.example.toml agent/config.py
 
 ```bash
 git checkout "$sha"     # compose 和 crontab 要和 image 是同一個 commit，不用 git pull
-AGENT_IMAGE_TAG=$sha docker compose -f deploy/compose.prod.yaml pull
-AGENT_IMAGE_TAG=$sha docker compose -f deploy/compose.prod.yaml up -d
-docker compose -f deploy/compose.prod.yaml ps
+AGENT_IMAGE_TAG=$sha podman compose -f deploy/compose.prod.yaml pull
+AGENT_IMAGE_TAG=$sha podman compose -f deploy/compose.prod.yaml up -d
+podman compose -f deploy/compose.prod.yaml ps
 ```
 
-通過條件：`ps` 顯示 `running`，image 是 `ghcr.io/ccchou/agents-lab:$sha`。`git checkout` 之後是 detached HEAD，這是預期的。
+通過條件：`ps` 顯示 `Up`，image 是 `ghcr.io/ccchou/agents-lab:$sha`。`git checkout` 之後是 detached HEAD，這是預期的。
 
 ### 3.5 驗證
 
 ```bash
-c="docker compose -f deploy/compose.prod.yaml"
+c="podman compose -f deploy/compose.prod.yaml"
 curl -fsS -X POST localhost:8000/sessions -H 'Content-Type: application/json' -d '{"owner": "cli"}'
 $c exec agent date
 $c exec agent getent hosts miniflux.internal
@@ -122,6 +135,7 @@ curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-tech/run   # 會真�
 | `date` | 時區是 `CST`（台北時間） |
 | `getent hosts` | 印出 Miniflux 的 IP |
 | 觸發任務 | 回傳 200 和 `session_id`；Slack 收到訊息，日期是台北時間，文章來自 Miniflux |
+| 重開機（只有第一次部署） | `systemctl reboot` 後，`podman ps` 裡有這個 container，`POST /sessions` 仍然正常 |
 
 `POST /sessions` 之後會換成 `GET /healthz`（見 roadmap 階段 6）。自動化時，觸發任務會真的送出通知，只在第一次部署或手動要求時執行。
 
@@ -139,12 +153,12 @@ diff <(crontab -l 2>/dev/null) deploy/crontab && echo "crontab up to date"
 docker buildx imagetools create -t ghcr.io/ccchou/agents-lab:latest "ghcr.io/ccchou/agents-lab:$sha"
 ```
 
-通過條件：`docker buildx imagetools inspect ghcr.io/ccchou/agents-lab:latest` 的 digest 和 `:$sha` 相同。之後在常駐機器上不加 `AGENT_IMAGE_TAG` 的 `docker compose` 指令（README 的「日常操作」）也會用這個版本。
+通過條件：`docker buildx imagetools inspect ghcr.io/ccchou/agents-lab:latest` 的 digest 和 `:$sha` 相同。之後在常駐機器上不加 `AGENT_IMAGE_TAG` 的 `podman compose` 指令（README 的「日常操作」）也會用這個版本。
 
 ### 3.8 清理
 
 ```bash
-docker image prune -f
+podman image prune -f
 ```
 
 ### 3.9 隔天確認
@@ -161,7 +175,7 @@ tail ~/agent-jobs-*.log
 
 ```bash
 git checkout "$prev"
-AGENT_IMAGE_TAG=$prev docker compose -f deploy/compose.prod.yaml up -d
+AGENT_IMAGE_TAG=$prev podman compose -f deploy/compose.prod.yaml up -d
 echo "$(date -Iseconds) rollback -> $prev" >> ~/agent-deploys.log
 ```
 
