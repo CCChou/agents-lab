@@ -9,3 +9,5 @@ __pycache__/
 config/*
 !config/*.example.toml
 deploy/compose.hosts.yaml
+# Editor swap files
+*.swp

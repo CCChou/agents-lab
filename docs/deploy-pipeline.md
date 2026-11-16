@@ -45,12 +45,13 @@ podman compose -f deploy/compose.prod.yaml config   # 看得懂 name 和 ${AGENT
 
 # 用 systemd 管理 compose：開機時啟動，systemctl start/stop/restart 操作
 mkdir -p /etc/agents-lab
-ln -s /root/agents-lab/deploy/agents-lab.service /etc/systemd/system/
+install -m 644 deploy/agents-lab.service /etc/systemd/system/
+restorecon -v /etc/systemd/system/agents-lab.service
 systemctl daemon-reload
 systemctl enable agents-lab        # 第一次部署的 3.4 才啟動
 ```
 
-`agents-lab.service` 從 `/etc/agents-lab/image.env` 讀 `AGENT_IMAGE_TAG`，每次部署時寫入，所以重開機後跑的是最後部署的版本，不是 `latest`。不要另外啟用 `podman-restart.service`，開機啟動只交給這個 unit；container 自己結束時，由 compose 的 `restart: always` 重啟。unit 用連結的方式安裝，`git checkout` 換版本時也會跟著換，unit 有變更時要 `systemctl daemon-reload`。
+`agents-lab.service` 從 `/etc/agents-lab/image.env` 讀 `AGENT_IMAGE_TAG`，每次部署時寫入，所以重開機後跑的是最後部署的版本，不是 `latest`。不要另外啟用 `podman-restart.service`，開機啟動只交給這個 unit；container 自己結束時，由 compose 的 `restart: always` 重啟。unit 用複製的方式安裝：用 `ln -s` 連到 `/root` 裡的檔案時，SELinux 會讓 systemd 讀不到（`enable` 時出現 access denied），`restorecon` 把複製過去的檔案標成 `systemd_unit_file_t`。所以 `git checkout` 換版本時 unit 不會跟著換，3.4 會比對，有差異時再複製一次。只換 image 的 tag 時不用動 unit。
 
 `config/` 會被 compose 的 `:Z` 重新標上 SELinux 標籤，只給這個 container 用。
 
@@ -120,7 +121,12 @@ git diff "$prev" "$sha" -- config/config.example.toml config.example.toml agent/
 git checkout "$sha"     # compose、crontab 和 unit 要和 image 是同一個 commit，不用 git pull
 echo "AGENT_IMAGE_TAG=$sha" > /etc/agents-lab/image.env
 AGENT_IMAGE_TAG=$sha podman compose -f deploy/compose.prod.yaml pull   # 先拉好，restart 時不用等
-systemctl daemon-reload                # unit 有變更時才需要，執行也無妨
+# unit 有變更時才重新安裝
+if ! diff -q deploy/agents-lab.service /etc/systemd/system/agents-lab.service; then
+  install -m 644 deploy/agents-lab.service /etc/systemd/system/
+  restorecon /etc/systemd/system/agents-lab.service
+  systemctl daemon-reload
+fi
 systemctl restart agents-lab
 systemctl status agents-lab --no-pager
 podman ps
@@ -134,7 +140,7 @@ podman ps
 c="podman compose -f deploy/compose.prod.yaml"
 curl -fsS -X POST localhost:8000/sessions -H 'Content-Type: application/json' -d '{"owner": "cli"}'
 $c exec agent date
-$c exec agent getent hosts miniflux.internal
+$c exec agent python -c "import httpx; print(httpx.get('https://miniflux.internal/healthcheck', verify=False, timeout=10).status_code)"
 curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-tech/run   # 會真的送到 Slack
 ```
 
@@ -142,8 +148,8 @@ curl -fsS --max-time 900 -X POST localhost:8000/jobs/daily-tech/run   # 會真�
 | --- | --- |
 | `POST /sessions` | 回傳 `session_id` |
 | `date` | 時區是 `CST`（台北時間） |
-| `getent hosts` | 印出 Miniflux 的 IP |
-| 觸發任務 | 回傳 200 和 `session_id`；Slack 收到訊息，日期是台北時間，文章來自 Miniflux |
+| 連 Miniflux | 印出 `200`。網址換成 `config.toml` 的 `miniflux.base_url`；image 裡沒有 `curl`，用 Python 的 `httpx`。只檢查名稱解析不夠，解析得到也可能連不上 |
+| 觸發任務 | 回傳 200 和 `session_id`；Slack 收到訊息，日期是台北時間，列出實際的 category 和文章。工具失敗時任務仍然回傳 200（見 roadmap 的已知問題），所以一定要看 Slack 的內容 |
 | 重開機（只有第一次部署） | `systemctl reboot` 後，`systemctl status agents-lab` 是 `active`，`podman ps` 的 image 仍然是 `:$sha`，`POST /sessions` 正常 |
 
 `POST /sessions` 之後會換成 `GET /healthz`（見 roadmap 階段 6）。自動化時，觸發任務會真的送出通知，只在第一次部署或手動要求時執行。
@@ -176,7 +182,7 @@ podman image prune -f
 tail ~/agent-jobs-*.log
 ```
 
-通過條件：每個任務都有當天 08:00 的紀錄，而且是 `session_id`，不是 `curl: (22)`。
+通過條件：每個任務都有當天 08:00 的紀錄，而且是 `session_id`，不是 `curl: (22)`；Slack 的內容有實際的文章。
 
 ## 退回舊版
 
@@ -185,7 +191,7 @@ tail ~/agent-jobs-*.log
 ```bash
 git checkout "$prev"
 echo "AGENT_IMAGE_TAG=$prev" > /etc/agents-lab/image.env
-systemctl daemon-reload
+# unit 跟目前安裝的不同時，照 3.4 重新安裝
 systemctl restart agents-lab
 echo "$(date -Iseconds) rollback -> $prev" >> ~/agent-deploys.log
 ```

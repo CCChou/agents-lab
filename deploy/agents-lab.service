@@ -1,8 +1,10 @@
 # Runs compose.prod.yaml as a system service on the RHEL host (D-041).
-# Install as root: ln -s /root/agents-lab/deploy/agents-lab.service /etc/systemd/system/
-#                  systemctl daemon-reload && systemctl enable --now agents-lab
+# Install as root by copying, not linking: under SELinux systemd cannot read a unit in /root.
+#   install -m 644 /root/agents-lab/deploy/agents-lab.service /etc/systemd/system/
+#   restorecon /etc/systemd/system/agents-lab.service
+#   systemctl daemon-reload && systemctl enable --now agents-lab
 # The unit starts the container at boot and stops it on shutdown; restart: always in the compose
-# file restarts it when it exits. Run systemctl daemon-reload after this file changes.
+# file restarts it when it exits. Copy it again and daemon-reload after this file changes.
 [Unit]
 Description=agents-lab (podman compose)
 Wants=network-online.target
